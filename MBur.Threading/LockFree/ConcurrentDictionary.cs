@@ -476,74 +476,101 @@ namespace MBur.Collections.LockFree
 
             unchecked
             {
-                var comp = _keysComparer;
-                var frame = _data.Frame;
-                var index = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
-                var sync = frame.SyncTable[index];
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
 
-                // return if empty
-                if (sync == (int)RecordStatus.Empty)
+                while (true)
                 {
-                    value = default;
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
 
-                    return false;
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.Full)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Read, sync))
+                    {
+                        try
+                        {
+                            var keys = frame.KeysTable[index];
+                            var vals = frame.ValuesTable[index];
+
+                            // return if empty
+                            if (sync == (int)RecordStatus.Empty)
+                            {
+                                value = default;
+
+                                return false;
+                            }
+
+                            // check cell 0
+                            if (
+                                    (sync & (int)RecordStatus.HasValue0) != 0
+                                                &&
+                                    comp.Equals(key, keys.Key0)
+                               )
+                            {
+                                value = vals.Value0;
+
+                                return true;
+                            }
+
+                            // check cell 1
+                            if (
+                                    (sync & (int)RecordStatus.HasValue1) != 0
+                                                &&
+                                    comp.Equals(key, keys.Key1)
+                               )
+                            {
+                                value = vals.Value1;
+
+                                return true;
+                            }
+
+                            // check cell 2
+                            if (
+                                    (sync & (int)RecordStatus.HasValue2) != 0
+                                                &&
+                                    comp.Equals(key, keys.Key2)
+                               )
+                            {
+                                value = vals.Value2;
+
+                                return true;
+                            }
+
+                            // check cell 3
+                            if (
+                                    (sync & (int)RecordStatus.HasValue3) != 0
+                                                &&
+                                    comp.Equals(key, keys.Key3)
+                               )
+                            {
+                                value = vals.Value3;
+
+                                return true;
+                            }
+                        }
+                        finally
+                        {
+                            syncs[index] = sync;
+                        }
+
+                        // not exist
+                        value = default;
+
+                        return false;
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
                 }
-
-                var vals = frame.ValuesTable[index];
-                var keys = frame.KeysTable[index];
-
-                // check cell 0
-                if (
-                        (sync & (int)RecordStatus.HasValue0) != 0
-                                    &&
-                        comp.Equals(key, keys.Key0)
-                   )
-                {
-                    value = vals.Value0;
-
-                    return true;
-                }
-
-                // check cell 1
-                if (
-                        (sync & (int)RecordStatus.HasValue1) != 0
-                                    &&
-                        comp.Equals(key, keys.Key1)
-                   )
-                {
-                    value = vals.Value1;
-
-                    return true;
-                }
-
-                // check cell 2
-                if (
-                        (sync & (int)RecordStatus.HasValue2) != 0
-                                    &&
-                        comp.Equals(key, keys.Key2)
-                   )
-                {
-                    value = vals.Value2;
-
-                    return true;
-                }
-
-                // check cell 3
-                if (
-                        (sync & (int)RecordStatus.HasValue3) != 0
-                                    &&
-                        comp.Equals(key, keys.Key3)
-                   )
-                {
-                    value = vals.Value3;
-
-                    return true;
-                }
-
-                // not exist
-                value = default;
-
-                return false;
             }
         }
 
@@ -3652,7 +3679,7 @@ namespace MBur.Collections.LockFree
 
                 var counts = Volatile.Read(ref data.Counts);
 
-                if (id > counts.Length)
+                if (id < counts.Length)
                 {
                     return counts;
                 }
@@ -4302,16 +4329,17 @@ namespace MBur.Collections.LockFree
         // Warning: When changing, carefully look at the use in more><less conditions.
         private enum RecordStatus
         {
-            Empty = 000,
+            Empty     = 000,
             HasValue0 = 001,
             HasValue1 = 002,
             HasValue2 = 004,
             HasValue3 = 008,
-            Full = 015,
-            Adding = 016,
-            Removing = 032,
-            Updating = 064,
-            Growing = 128
+            Full      = 015,
+            Adding    = 016,
+            Removing  = 032,
+            Updating  = 064,
+            Growing   = 128,
+            Read      = 256,
         }
 
         // Bucket of keys for the table
