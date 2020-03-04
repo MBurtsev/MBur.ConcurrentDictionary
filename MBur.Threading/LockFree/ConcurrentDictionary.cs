@@ -31,7 +31,7 @@ namespace MBur.Collections.LockFree
         // to have less friction. Wait-Free count is also used, which allowed to
         // abandon Interlocked.Add. All public methods are thread-safe. The
         // enumerator does not lock the hash table while reading.
-        // See for more information.
+        // See for more information https://www.linkedin.com/pulse/lock-free-hash-table-maksim-burtsev/
 
         // The default value that is used if the user has not specified a capacity.
         private const int DEFAULT_CAPACITY = 127;
