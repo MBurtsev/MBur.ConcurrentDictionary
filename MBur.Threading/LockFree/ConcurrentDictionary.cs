@@ -495,9 +495,6 @@ namespace MBur.Collections.LockFree
                         continue;
                     }
 
-                    var keys = frame.KeysTable[index];
-                    var vals = frame.ValuesTable[index];
-
                     if (
                             (sync & (int)RecordStatus.Read) != 0
                                         ||
@@ -506,6 +503,9 @@ namespace MBur.Collections.LockFree
                     {
                         try
                         {
+                            var keys = frame.KeysTable[index];
+                            var vals = frame.ValuesTable[index];
+
                             // return if empty
                             if (sync == (int)RecordStatus.Empty)
                             {

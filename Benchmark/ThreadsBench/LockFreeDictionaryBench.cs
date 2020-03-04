@@ -55,6 +55,38 @@ namespace Benchmark.ThreadsBench
 
         #endregion
 
+        #region ' TryGetValue '
+
+        [IterationSetup(Target = nameof(TryGetValue))]
+        public void TryGetValueSetup()
+        {
+            thread_id = 0;
+
+            data = new ConcurrentDictionary<int, int>();
+            bench = new ThreadsBenchHelper();
+
+            bench.AddWorks(TryGetValueWork, Threads);
+            bench.Prepare();
+        }
+
+        [Benchmark(OperationsPerInvoke = ThreadsBenchConfig.OperationsCount)]
+        public void TryGetValue()
+        {
+            bench.Begin();
+        }
+
+        void TryGetValueWork()
+        {
+            var key = Interlocked.Add(ref thread_id, 1) * threads_key_range;
+
+            for (int i = 0; i < ThreadsBenchConfig.OperationsCount; ++i)
+            {
+                data.TryGetValue(key + i, out _);
+            }
+        }
+
+        #endregion
+
         #region ' TryRemove '
 
         [IterationSetup(Target = nameof(Remove))]
