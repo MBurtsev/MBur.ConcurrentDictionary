@@ -495,13 +495,17 @@ namespace MBur.Collections.LockFree
                         continue;
                     }
 
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Read, sync))
+                    var keys = frame.KeysTable[index];
+                    var vals = frame.ValuesTable[index];
+
+                    if (
+                            sync == (int)RecordStatus.Read 
+                                        ||
+                            sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Read, sync)
+                        )
                     {
                         try
                         {
-                            var keys = frame.KeysTable[index];
-                            var vals = frame.ValuesTable[index];
-
                             // return if empty
                             if (sync == (int)RecordStatus.Empty)
                             {
