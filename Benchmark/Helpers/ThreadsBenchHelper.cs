@@ -1,4 +1,4 @@
-﻿// Maksim Burtsev https://github.com/nim
+﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
 using System;
@@ -27,6 +27,12 @@ namespace Benchmark.Helpers
             threads = new List<Thread>();
         }
 
+        // A list of methods that are called by each thread. One for each.
+        public List<Action> Actions => list;
+
+        // Work will be restarted as long as this flag is enabled.
+        public bool ReWork { get; set; }
+
         // Add method for benchmark
         public void AddWorks(Action action, int count)
         {
@@ -37,19 +43,24 @@ namespace Benchmark.Helpers
         }
 
         // Creating threads and waiting for readiness.
-        public void Prepare()
+        public void Prepare() 
         {
             for (var i = 0; i < list.Count; ++i)
             {
-                var itm = list[i];
-                var thread = new Thread(() => DoWork(itm));
+                var index = i;
+                var thread = new Thread(() => DoWork(index));
 
                 threads.Add(thread);
 
                 thread.Start(); 
             }
 
-            // waiting until all threads are ready
+            WaitReady();
+        }
+
+        // waiting until all threads are ready
+        public void WaitReady()
+        {
             while (Volatile.Read(ref ready) < threads.Count)
             {
             }
@@ -58,8 +69,10 @@ namespace Benchmark.Helpers
         // An important condition for accuracy is the simultaneous 
         // inclusion of all threads in the work.
         // Threads will be launched at the same time as possible.
-        void DoWork(Action action)
+        void DoWork(int index)
         {
+            var action = list[index];
+
             Interlocked.Add(ref ready, 1);
 
             // wait for the start
@@ -70,6 +83,19 @@ namespace Benchmark.Helpers
             action();
 
             Interlocked.Add(ref complate, 1);
+
+            // Restart work again
+            if (ReWork)
+            {
+                // Restart will be after calling the Clear method.
+                // If necessary it is permissible to replace the Actions with another.
+                while (Volatile.Read(ref begin))
+                {
+                    Thread.Yield();
+                }
+
+                DoWork(index);
+            }
         }
 
         // Start benchmark
@@ -81,25 +107,20 @@ namespace Benchmark.Helpers
             {
                 Thread.Yield();
             }
-
-            //foreach (var itm in threads)
-            //{
-            //    if (itm.ThreadState == ThreadState.Running)
-            //    {
-            //        itm.Join();
-            //    }
-            //}
         }
 
         // Clear benchmark for reuse
-        public void Clear()
+        public void Clear(bool onlyFlags = false)
         {
             ready = 0;
             complate = 0;
             begin = false;
-            
-            list.Clear();
-            threads.Clear();
+
+            if (!onlyFlags)
+            {
+                list.Clear();
+                threads.Clear();
+            }
         }
     }
 }

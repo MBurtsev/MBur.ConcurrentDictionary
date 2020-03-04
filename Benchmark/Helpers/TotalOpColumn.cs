@@ -1,4 +1,4 @@
-﻿// Maksim Burtsev https://github.com/nim
+﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
 using BenchmarkDotNet.Columns;

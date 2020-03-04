@@ -1,32 +1,33 @@
-﻿// Maksim Burtsev https://github.com/nim
+﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
 using System;
 using System.Threading;
-using Benchmark.GenericBench;
 using Benchmark.Helpers;
 using Benchmark.ThreadsBench;
 using BenchmarkDotNet.Running;
-using Microsoft.Extensions.Configuration;
 
 namespace Benchmark
 {
-    class Program
+    public class Program
     {
         static void Main(string[] args)
         {
             Thread.CurrentThread.CurrentCulture = ThreadsBenchConfig.Culture;
 
-            // Concurrent
-            //BenchmarkRunner.Run<SegmentStackBench>();
-            BenchmarkRunner.Run<SolidStackBench>();
-            //BenchmarkRunner.Run<ConcurrentStackBench>();
+            // ConcurrentDictionary
+            //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
-            // Generic
-            //BenchmarkRunner.Run<NimStackBench>();
-            //BenchmarkRunner.Run<SystemStackBench>();
+            // LockFreeDictionary
+            BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
-            Console.ReadKey();
+            // Wat-Free Count
+            // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
+            //BenchmarkRunner.Run<CountBench>();
+
+
+            Console.WriteLine("Complate");
+            Console.ReadLine();
         }
     }
 }

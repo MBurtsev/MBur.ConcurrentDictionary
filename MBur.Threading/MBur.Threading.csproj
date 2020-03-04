@@ -8,4 +8,8 @@
     <StartupObject />
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DefineConstants>TRACE;CDS_COMPILE_JUST_THIS</DefineConstants>
+  </PropertyGroup>
+
 </Project>

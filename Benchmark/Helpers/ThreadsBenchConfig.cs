@@ -1,4 +1,4 @@
-﻿// Maksim Burtsev https://github.com/nim
+﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
 using BenchmarkDotNet.Columns;
@@ -20,7 +20,7 @@ namespace Benchmark.Helpers
         // Number of threads
         public static int[] Threads = new[] 
         {
-            /*01, 02 , 03, 04, 05, 06, 07, 08, 09, 10, 11,*/ 12/*, 13, 14, 15, 16,
+            /**/01, 02 , 03, 04/*, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29 ,30, 31, 32*/ 
         };
 
@@ -30,8 +30,8 @@ namespace Benchmark.Helpers
         {
             Add(Job.ShortRun
                 .WithLaunchCount(1)
-                .WithWarmupCount(2)
-                .WithIterationCount(5)
+                .WithWarmupCount(2) // 2
+                .WithIterationCount(5) // 5
                 .WithInvocationCount(1)
                 .WithUnrollFactor(1)
                 );
