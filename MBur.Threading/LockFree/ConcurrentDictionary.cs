@@ -499,7 +499,7 @@ namespace MBur.Collections.LockFree
                     var vals = frame.ValuesTable[index];
 
                     if (
-                            sync == (int)RecordStatus.Read 
+                            (sync & (int)RecordStatus.Read) != 0
                                         ||
                             sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Read, sync)
                         )
