@@ -18,6 +18,8 @@ namespace Benchmark
         {
             Thread.CurrentThread.CurrentCulture = ThreadsBenchConfig.Culture;
 
+            // For settings, see ThreadsBenchConfig
+
             // ConcurrentDictionary
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
@@ -28,7 +30,14 @@ namespace Benchmark
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
             //BenchmarkRunner.Run<CountBench>();
 
+            //TryGetTest();
 
+            Console.WriteLine("Complate");
+            Console.ReadLine();
+        }
+
+        static void TryGetTest()
+        {
             var readers = 2;
             var writes  = 4;
             var cd = new ConcurrentDictionary<int, KeyValuePair<long, long>>();
@@ -59,9 +68,6 @@ namespace Benchmark
                     }
                 });
             }
-            
-            Console.WriteLine("Complate");
-            Console.ReadLine();
         }
     }
 }

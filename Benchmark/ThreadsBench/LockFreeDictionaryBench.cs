@@ -63,6 +63,18 @@ namespace Benchmark.ThreadsBench
             thread_id = 0;
 
             data = new ConcurrentDictionary<int, int>();
+
+            // Preparing data so that the keys are different for each thread.
+            for (var i = 0; i < Threads; ++i)
+            {
+                var key = (i + 1) * threads_key_range;
+
+                for (var j = 0; j < ThreadsBenchConfig.OperationsCount; ++j)
+                {
+                    data.TryAdd(key + j, j);
+                }
+            }
+
             bench = new ThreadsBenchHelper();
 
             bench.AddWorks(TryGetValueWork, Threads);

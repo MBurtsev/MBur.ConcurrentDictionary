@@ -4457,7 +4457,6 @@ namespace MBur.Collections.LockFree
                         return false;
                     }
 
-                    var vals = data.ValuesTable[_index];
                     var keys = data.KeysTable[_index];
                     var sync = data.SyncTable[_index];
 
@@ -4476,28 +4475,28 @@ namespace MBur.Collections.LockFree
                     }
 
                     // check cell 0
-                    if (_cell < 1 && (sync & (int)RecordStatus.HasValue0) != 0)
+                    if (_cell < 1 && (sync & (int)RecordStatus.HasValue0) != 0 && _dictionary.TryGetValue(keys.Key0, out TValue val0))
                     {
                         _cell = 1;
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key0, vals.Value0);
+                        Current = new KeyValuePair<TKey, TValue>(keys.Key0, val0);
 
                         return true;
                     }
 
                     // check cell 1
-                    if (_cell < 2 && (sync & (int)RecordStatus.HasValue1) != 0)
+                    if (_cell < 2 && (sync & (int)RecordStatus.HasValue1) != 0 && _dictionary.TryGetValue(keys.Key1, out TValue val1))
                     {
                         _cell = 2;
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key1, vals.Value1);
+                        Current = new KeyValuePair<TKey, TValue>(keys.Key1, val1);
 
                         return true;
                     }
 
                     // check cell 2
-                    if (_cell < 3 && (sync & (int)RecordStatus.HasValue2) != 0)
+                    if (_cell < 3 && (sync & (int)RecordStatus.HasValue2) != 0 && _dictionary.TryGetValue(keys.Key2, out TValue val2))
                     {
                         _cell = 3;
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key2, vals.Value2);
+                        Current = new KeyValuePair<TKey, TValue>(keys.Key2, val2);
 
                         return true;
                     }
@@ -4506,9 +4505,9 @@ namespace MBur.Collections.LockFree
                     _index++;
 
                     // check cell 3
-                    if ((sync & (int)RecordStatus.HasValue3) != 0)
+                    if ((sync & (int)RecordStatus.HasValue3) != 0 && _dictionary.TryGetValue(keys.Key0, out TValue val3))
                     {
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key3, vals.Value3);
+                        Current = new KeyValuePair<TKey, TValue>(keys.Key3, val3);
 
                         return true;
                     }
