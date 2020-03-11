@@ -18,9 +18,9 @@ namespace Benchmark.Helpers
         public const int OperationsCount = 10_000_000;
 
         // Number of threads
-        public static int[] Threads = new[] 
+        public static int[] Threads = new[]
         {
-            /**/01, 02 , 03, 04, 05, 06/*, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16*/
+            /**/01, 02 , 03, 04/*, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16*/
         };
 
         public static CultureInfo Culture = new CultureInfo("en-US");

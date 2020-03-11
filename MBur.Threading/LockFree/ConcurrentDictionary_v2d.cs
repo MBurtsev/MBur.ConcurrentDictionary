@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree_v2b
+namespace MBur.Collections.LockFree/*_v2d*/
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -51,6 +51,8 @@ namespace MBur.Collections.LockFree_v2b
         private readonly IEqualityComparer<TKey> _keysComparer;
         // To compare values
         private readonly IEqualityComparer<TValue> _valuesComparer;
+        // 
+        private readonly bool _isRefenceType;
 
         #region ' Public Interface '
 
@@ -198,6 +200,7 @@ namespace MBur.Collections.LockFree_v2b
             _keysComparer   = keysComparer ?? EqualityComparer<TKey>.Default;
             _valuesComparer = valuesComparer;
             _data           = new HashTableData(capacity, COUNTS_SIZE);
+            _isRefenceType  = typeof(TKey).IsClass | typeof(TValue).IsClass;
         }
 
         #region ' Deprecated '
@@ -422,20 +425,14 @@ namespace MBur.Collections.LockFree_v2b
                 var buck  = data.Cabinets[link.Id].Buckets[link.Positon];
 
                 if (
-                        hash == buck.Hash0
-                                    &&
                         (sync & (int)RecordStatus.HasValue0) != 0
                                     &&
                         comp.Equals(key, buck.Key0)
                                     ||
-                        hash == buck.Hash1
-                                    &&
                         (sync & (int)RecordStatus.HasValue1) != 0
                                     &&
                         comp.Equals(key, buck.Key1)
                                     ||
-                        hash == buck.Hash2
-                                    &&
                         (sync & (int)RecordStatus.HasValue2) != 0
                                     &&
                         comp.Equals(key, buck.Key2)
@@ -560,7 +557,7 @@ namespace MBur.Collections.LockFree_v2b
             var hash  = comp.GetHashCode(key) & 0x7fffffff;
             var cabn  = GetCabinet(data);
             
-            PreparePage(data, cabn);
+            PreparePage(cabn);
 
             unchecked
             {
@@ -580,7 +577,7 @@ namespace MBur.Collections.LockFree_v2b
                     }
 
                     // check exist
-                    var link = frame.Links[index];
+                    ref var link = ref frame.Links[index];
                     ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                     // Check that there is at least one free space
@@ -600,13 +597,9 @@ namespace MBur.Collections.LockFree_v2b
                                     if (
                                             (sync & (int)RecordStatus.HasValue1) != 0
                                                         &&
-                                            hash == buck.Hash1
-                                                        &&
                                             comp.Equals(key, buck.Key1)
                                                         ||
                                             (sync & (int)RecordStatus.HasValue2) != 0
-                                                        &&
-                                            hash == buck.Hash2
                                                         &&
                                             comp.Equals(key, buck.Key2)
                                         )
@@ -618,7 +611,6 @@ namespace MBur.Collections.LockFree_v2b
 
                                     if (cabn.Id == link.Id)
                                     {
-                                        cabn.Buckets[link.Positon].Hash0  = hash;
                                         cabn.Buckets[link.Positon].Key0   = key;
                                         cabn.Buckets[link.Positon].Value0 = value;
 
@@ -629,9 +621,9 @@ namespace MBur.Collections.LockFree_v2b
                                         var page = cabn.ReadyPage;
 
                                         cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Hash0  = hash;
                                         cabn.Buckets[page].Key0   = key;
                                         cabn.Buckets[page].Value0 = value;
+
                                         frame.Links[index] = new Link(cabn.Id, page);
 
                                         syncs[index] = sync | (int)RecordStatus.HasValue0;
@@ -646,13 +638,9 @@ namespace MBur.Collections.LockFree_v2b
                                 {
                                     // check exist
                                     if (
-                                            hash == buck.Hash0
-                                                        &&
                                             comp.Equals(key, buck.Key0)
                                                         ||
                                             (sync & (int)RecordStatus.HasValue2) != 0
-                                                        &&
-                                            hash == buck.Hash2
                                                         &&
                                             comp.Equals(key, buck.Key2)
                                         )
@@ -664,7 +652,6 @@ namespace MBur.Collections.LockFree_v2b
 
                                     if (cabn.Id == link.Id)
                                     {
-                                        cabn.Buckets[link.Positon].Hash1  = hash;
                                         cabn.Buckets[link.Positon].Key1   = key;
                                         cabn.Buckets[link.Positon].Value1 = value;
 
@@ -675,10 +662,10 @@ namespace MBur.Collections.LockFree_v2b
                                         var page = cabn.ReadyPage;
 
                                         cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Hash1  = hash;
                                         cabn.Buckets[page].Key1   = key;
                                         cabn.Buckets[page].Value1 = value;
-                                        frame.Links[index]        = new Link(cabn.Id, page);
+
+                                        frame.Links[index] = new Link(cabn.Id, page);
 
                                         syncs[index] = sync | (int)RecordStatus.HasValue1;
 
@@ -693,12 +680,8 @@ namespace MBur.Collections.LockFree_v2b
                                 {
                                     // check exist
                                     if (
-                                            hash == buck.Hash0
-                                                        &&
                                             comp.Equals(key, buck.Key0)
                                                         ||
-                                            hash == buck.Hash1
-                                                        &&
                                             comp.Equals(key, buck.Key1)
                                         )
                                     {
@@ -709,7 +692,6 @@ namespace MBur.Collections.LockFree_v2b
 
                                     if (cabn.Id == link.Id)
                                     {
-                                        cabn.Buckets[link.Positon].Hash2  = hash;
                                         cabn.Buckets[link.Positon].Key2   = key;
                                         cabn.Buckets[link.Positon].Value2 = value;
 
@@ -720,10 +702,10 @@ namespace MBur.Collections.LockFree_v2b
                                         var page = cabn.ReadyPage;
 
                                         cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Hash2  = hash;
                                         cabn.Buckets[page].Key2   = key;
                                         cabn.Buckets[page].Value2 = value;
-                                        frame.Links[index]        = new Link(cabn.Id, page);
+
+                                        frame.Links[index] = new Link(cabn.Id, page);
 
                                         syncs[index] = sync | (int)RecordStatus.HasValue2;
 
@@ -751,16 +733,10 @@ namespace MBur.Collections.LockFree_v2b
                     {
                         // check exist
                         if (
-                                hash == buck.Hash0
-                                            &&
                                 comp.Equals(key, buck.Key0)
                                             ||
-                                hash == buck.Hash1
-                                            &&
                                 comp.Equals(key, buck.Key1)
                                             ||
-                                hash == buck.Hash2
-                                            &&
                                 comp.Equals(key, buck.Key2)
                             )
                         {
@@ -1219,17 +1195,17 @@ namespace MBur.Collections.LockFree_v2b
 
                         if ((sync & (int)RecordStatus.HasValue0) != 0)
                         {
-                            GrowingAdd(data, new_frame, cabinet, buck.Key0, buck.Value0, buck.Hash0);
+                            GrowingAdd(data, new_frame, cabinet, buck.Key0, buck.Value0);
                         }
 
                         if ((sync & (int)RecordStatus.HasValue1) != 0)
                         {
-                            GrowingAdd(data, new_frame, cabinet, buck.Key1, buck.Value1, buck.Hash1);
+                            GrowingAdd(data, new_frame, cabinet, buck.Key1, buck.Value1);
                         }
 
                         if ((sync & (int)RecordStatus.HasValue2) != 0)
                         {
-                            GrowingAdd(data, new_frame, cabinet, buck.Key2, buck.Value2, buck.Hash2);
+                            GrowingAdd(data, new_frame, cabinet, buck.Key2, buck.Value2);
                         }
 
                         RemoveLink(data, link, cabinet.Id);
@@ -1249,12 +1225,12 @@ namespace MBur.Collections.LockFree_v2b
                 // unlock growing
                 data.SyncGrowing = 0;
 
-                PreparePage(data, cabinet);
+                PreparePage(cabinet);
             }
         }
 
         // Add on growing
-        private void GrowingAdd(HashTableData data, HashTableDataFrame frame, Cabinet cabinet, TKey key, TValue value, int hash)
+        private void GrowingAdd(HashTableData data, HashTableDataFrame frame, Cabinet cabinet, TKey key, TValue value)
         {
             int page;
             var comp  = _keysComparer;
@@ -1263,7 +1239,7 @@ namespace MBur.Collections.LockFree_v2b
             
             if (frame.Links[index].Id != cabinet.Id)
             {
-                PreparePage(data, cabinet);
+                PreparePage(cabinet);
 
                 page = cabinet.ReadyPage;
 
@@ -1280,7 +1256,6 @@ namespace MBur.Collections.LockFree_v2b
             {
                 cabinet.Buckets[page].Key0   = key;
                 cabinet.Buckets[page].Value0 = value;
-                cabinet.Buckets[page].Hash0  = hash;
 
                 frame.SyncTable[index] = sync | (int)RecordStatus.HasValue0;
             }
@@ -1288,7 +1263,6 @@ namespace MBur.Collections.LockFree_v2b
             {
                 cabinet.Buckets[page].Key1   = key;
                 cabinet.Buckets[page].Value1 = value;
-                cabinet.Buckets[page].Hash1  = hash;
 
                 frame.SyncTable[index] = sync | (int)RecordStatus.HasValue1;
             }
@@ -1296,7 +1270,6 @@ namespace MBur.Collections.LockFree_v2b
             {
                 cabinet.Buckets[page].Key2   = key;
                 cabinet.Buckets[page].Value2 = value;
-                cabinet.Buckets[page].Hash2  = hash;
 
                 frame.SyncTable[index] = sync | (int)RecordStatus.HasValue2;
             }
@@ -1486,7 +1459,7 @@ namespace MBur.Collections.LockFree_v2b
         
         // 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void PreparePage(HashTableData data, Cabinet cabinet)
+        private void PreparePage(Cabinet cabinet)
         {
             if (cabinet.ReadyPage < 0)
             {
@@ -1503,20 +1476,18 @@ namespace MBur.Collections.LockFree_v2b
                 // return removed element
                 if (guest != null)
                 {
-                    var seg = guest.Buffer.Reader;
-
-                    if (seg.ReaderPosition != seg.WriterPosition)
+                    if (guest.ReaderList >= 0 || guest.WriterList >= 0)
                     {
-                        cabinet.ReadyPage = seg.Messages[seg.ReaderPosition];
+                        if (guest.ReaderList < 0)
+                        {
+                            guest.ReaderList = guest.WriterList;
+                        }
 
-                        if (seg.ReaderPosition < seg.Messages.Length - 1)
-                        {
-                            seg.ReaderPosition++;
-                        }
-                        else
-                        {
-                            seg.ReaderPosition = 0;
-                        }
+                        cabinet.ReadyPage = guest.ReaderList;
+
+                        guest.ReaderList = cabinet.Buckets[cabinet.ReadyPage].Next;
+
+                        cabinet.Buckets[cabinet.ReadyPage].Next = -1;
 
                         return;
                     }
@@ -1526,50 +1497,6 @@ namespace MBur.Collections.LockFree_v2b
 
                         while (true)
                         {
-                            seg = cur_guest.Buffer.Reader;
-                            
-                            var cur_seg = seg;
-
-                            while (true)
-                            {
-                                // validation reader position
-                                if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
-                                {
-                                    cabinet.ReadyPage = seg.Messages[cur_seg.ReaderPosition];
-
-                                    // set position to next element for reading
-                                    if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
-                                    {
-                                        cur_seg.ReaderPosition++;
-                                    }
-                                    else
-                                    {
-                                        cur_seg.ReaderPosition = 0;
-                                    }
-
-                                    // save current guest
-                                    cabinet.Current = cur_guest;
-
-                                    // save current segment
-                                    cur_guest.Buffer.Reader = cur_seg;
-
-                                    return;
-                                }
-
-                                // swap to next segment
-                                cur_seg = cur_seg.Next;
-
-                                if (cur_seg == null)
-                                {
-                                    cur_seg = cur_guest.Buffer.Root;
-                                }
-
-                                if (cur_seg == seg)
-                                {
-                                    break;
-                                }
-                            }
-
                             // swap to next guest
                             cur_guest = cur_guest.Next;
 
@@ -1582,6 +1509,25 @@ namespace MBur.Collections.LockFree_v2b
                             {
                                 break;
                             }
+
+                            if (cur_guest.ReaderList < 0)
+                            {
+                                if (cur_guest.WriterList < 0)
+                                {
+                                    continue;
+                                }
+
+                                cur_guest.ReaderList = cur_guest.WriterList;
+                            }
+
+                            cabinet.ReadyPage = cur_guest.ReaderList;
+
+                            cur_guest.ReaderList = cabinet.Buckets[cabinet.ReadyPage].Next;
+
+                            cabinet.Buckets[cabinet.ReadyPage].Next = -1;
+                            cabinet.Current = cur_guest;
+
+                            return;
                         }
                     }
                 }
@@ -1677,86 +1623,20 @@ namespace MBur.Collections.LockFree_v2b
 
             guest = table[guest_id];
 
-            var seg = guest.Buffer.Writer;
-
-            // write message
-            if (seg.WriterPosition != seg.ReaderPosition - 1)
+            // clear link
+            if (_isRefenceType)
             {
-                if (seg.WriterPosition == seg.Messages.Length - 1)
-                {
-                    if (seg.ReaderPosition > 0)
-                    {
-                        seg.Messages[seg.WriterPosition] = link.Positon;
-                        seg.WriterPosition = 0;
+                owner.Buckets[guest.WriterDelay] = new Bucket { Next = guest.WriterList };
 
-                        return;
-                    }
-                }
-                else
-                {
-                    seg.Messages[seg.WriterPosition++] = link.Positon;
-
-                    return;
-                }
+                guest.WriterList  = guest.WriterDelay;
+                guest.WriterDelay = link.Positon;
             }
-
-            var cur  = seg.Next;
-            var last = guest.Buffer.Root;
-
-            // search for segment with free cells
-            while (true)
+            else
             {
-                if (cur == null)
-                {
-                    cur = guest.Buffer.Root;
-                }
+                owner.Buckets[link.Positon].Next = guest.WriterList;
 
-                if (cur == seg)
-                {
-                    break;
-                }
-
-                if (cur.WriterPosition != cur.ReaderPosition - 1)
-                {
-                    if (cur.WriterPosition == cur.Messages.Length - 1)
-                    {
-                        if (cur.ReaderPosition > 0)
-                        {
-                            cur.Messages[cur.WriterPosition] = link.Positon;
-                            cur.WriterPosition = 0;
-
-                            guest.Buffer.Writer = cur;
-
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        cur.Messages[cur.WriterPosition++] = link.Positon;
-
-                        guest.Buffer.Writer = cur;
-
-                        return;
-                    }
-                }
-
-                if (cur.Next == null)
-                {
-                    last = cur;
-                }
-
-                cur = cur.Next;
+                guest.WriterList = link.Positon;
             }
-
-            // create new segment
-            var new_seg = new ConcurrentDictionaryCycleBufferSegment(last.Messages.Length * 2);
-
-            new_seg.WriterPosition = 1;
-            new_seg.Messages[0]    = link.Positon;
-
-            last.Next = new_seg;
-
-            guest.Buffer.Writer = new_seg;
         }
 
         #endregion
@@ -2488,17 +2368,23 @@ namespace MBur.Collections.LockFree_v2b
         {
             public Guest(int id)
             {
-                Id     = id;
-                Next   = null;
-                Buffer = new ConcurrentDictionaryCycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
+                Id          = id;
+                Next        = null;
+                ReaderList  = -1;
+                WriterList  = -1;
+                WriterDelay = -1;
             }
 
             // guest id
             public int Id;
             // next guest
             public Guest Next;
-            // cycle buffer
-            public ConcurrentDictionaryCycleBuffer Buffer;
+            // Linked list for reading
+            public int ReaderList;
+            // Linked list for removed elements
+            public int WriterList;
+            //
+            public int WriterDelay;
         }
 
         // 
@@ -2520,15 +2406,13 @@ namespace MBur.Collections.LockFree_v2b
         [DebuggerDisplay("{Hash0}/{Value0}, {Hash1}/{Value1}, {Hash2}/{Value2}")]
         private struct Bucket
         {
-            public int      Hash0;
             public TKey     Key0;
-            public TValue   Value0;
-            public int      Hash1;
             public TKey     Key1;
-            public TValue   Value1;
-            public int      Hash2;
             public TKey     Key2;
+            public TValue   Value0;
+            public TValue   Value1;
             public TValue   Value2;
+            public int      Next;
         }
 
         /// <summary>
@@ -2791,46 +2675,6 @@ namespace MBur.Collections.LockFree_v2b
         public long Count;
     }
 
-    // 
-    //[StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE * 4)]
-    internal class ConcurrentDictionaryCycleBuffer
-    {
-        public ConcurrentDictionaryCycleBuffer(int capacity)
-        {
-            Root = new ConcurrentDictionaryCycleBufferSegment(capacity);
-            Reader = Root;
-            Writer = Root;
-        }
-
-        // the first segment
-        public ConcurrentDictionaryCycleBufferSegment Root;
-        // current reader segment
-        public ConcurrentDictionaryCycleBufferSegment Reader;
-        // current writer segment
-        public ConcurrentDictionaryCycleBufferSegment Writer;
-    }
-
-    // 
-    //[StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE * 4)]
-    internal class ConcurrentDictionaryCycleBufferSegment
-    {
-        public ConcurrentDictionaryCycleBufferSegment(int capacity)
-        {
-            Messages = new int[capacity];
-        }
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 1)]
-        public int ReaderPosition;
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 2)]
-        public int WriterPosition;
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 3)]
-        public int[] Messages;
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 4)]
-        public ConcurrentDictionaryCycleBufferSegment Next;
-    }
 
     /// <summary>
     ///     A size greater than or equal to the size of the most common CPU cache lines.

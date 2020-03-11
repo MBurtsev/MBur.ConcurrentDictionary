@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree/*_v2с*/
+namespace MBur.Collections.LockFree_v2c
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -734,8 +734,6 @@ namespace MBur.Collections.LockFree/*_v2с*/
                                 comp.Equals(key, buck.Key2)
                             )
                         {
-                            syncs[index] = sync;
-
                             return false;
                         }
 

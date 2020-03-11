@@ -41,13 +41,13 @@ namespace Benchmark
         {
             var b = new LockFreeDictionaryBench();
 
-            b.Threads = 1;
+            b.Threads = 4;
 
-            //b.AddSetup();
-            //b.Add();
+            b.AddSetup();
+            b.Add();
 
-            b.TryGetValueSetup();
-            b.TryGetValue();
+            //b.TryGetValueSetup();
+            //b.TryGetValue();
         }
 
         static void TryGetTest()
