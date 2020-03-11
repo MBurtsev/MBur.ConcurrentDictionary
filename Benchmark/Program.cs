@@ -18,22 +18,36 @@ namespace Benchmark
         {
             Thread.CurrentThread.CurrentCulture = ThreadsBenchConfig.Culture;
 
-            // For settings, see ThreadsBenchConfig
+            // To configure, see the ThreadsBenchConfig
+            // ----------------------------------------
 
             // ConcurrentDictionary
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
             // LockFreeDictionary
-            //BenchmarkRunner.Run<LockFreeDictionaryBench>();
+            BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
             // Wat-Free Count
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
             //BenchmarkRunner.Run<CountBench>();
 
-            //TryGetTest();
+            //Debug();
 
             Console.WriteLine("Complate");
             Console.ReadLine();
+        }
+
+        static void Debug()
+        {
+            var b = new LockFreeDictionaryBench();
+
+            b.Threads = 1;
+
+            //b.AddSetup();
+            //b.Add();
+
+            b.TryGetValueSetup();
+            b.TryGetValue();
         }
 
         static void TryGetTest()

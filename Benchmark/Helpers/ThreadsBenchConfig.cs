@@ -20,18 +20,17 @@ namespace Benchmark.Helpers
         // Number of threads
         public static int[] Threads = new[] 
         {
-            /**/ 01, 02 , 03, 04/*, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16,
-            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29 ,30, 31, 32*/ 
+            /**/01, 02 , 03, 04, 05, 06/*, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16*/
         };
 
         public static CultureInfo Culture = new CultureInfo("en-US");
 
         public ThreadsBenchConfig()
         {
-            Add(Job.ShortRun
+            Add(Job.MediumRun
                 .WithLaunchCount(1)
-                .WithWarmupCount(1) // 2
-                .WithIterationCount(3) // 5
+                .WithWarmupCount(3) // 2
+                .WithIterationCount(5) // 5
                 .WithInvocationCount(1)
                 .WithUnrollFactor(1)
                 );

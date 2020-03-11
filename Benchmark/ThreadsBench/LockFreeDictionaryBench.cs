@@ -1,6 +1,14 @@
 ﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
+//#define TRY_ADD
+#define TRY_GET_VALUE
+//#define TRY_REMOVE
+//#define TRY_UPDATE
+//#define GET_OR_ADD
+//#define ADD_OR_UPDATE
+//#define CONTAINS_KEY
+
 using System;
 using BenchmarkDotNet.Attributes;
 using Benchmark.Helpers;
@@ -24,6 +32,8 @@ namespace Benchmark.ThreadsBench
         public int Threads { get; set; }
 
         #region ' TryAdd '
+
+#if TRY_ADD
 
         [IterationSetup(Target = nameof(Add))]
         public void AddSetup()
@@ -49,13 +59,17 @@ namespace Benchmark.ThreadsBench
 
             for (int i = 0; i < ThreadsBenchConfig.OperationsCount; ++i)
             {
-                data.TryAdd(key + i, -i);
+                data.TryAdd(key + i, i);
             }
         }
+
+#endif
 
         #endregion
 
         #region ' TryGetValue '
+
+#if TRY_GET_VALUE
 
         [IterationSetup(Target = nameof(TryGetValue))]
         public void TryGetValueSetup()
@@ -97,9 +111,13 @@ namespace Benchmark.ThreadsBench
             }
         }
 
+#endif
+
         #endregion
 
         #region ' TryRemove '
+
+#if TRY_REMOVE
 
         [IterationSetup(Target = nameof(Remove))]
         public void RemoveSetup()
@@ -141,9 +159,13 @@ namespace Benchmark.ThreadsBench
             }
         }
 
+#endif
+
         #endregion
 
         #region ' TryUpdate '
+
+#if TRY_UPDATE
 
         [IterationSetup(Target = nameof(Update))]
         public void UpdateSetup()
@@ -185,9 +207,12 @@ namespace Benchmark.ThreadsBench
             }
         }
 
+#endif
         #endregion
 
         #region ' GetOrAdd '
+
+#if GET_OR_ADD
 
         [IterationSetup(Target = nameof(GetOrAdd))]
         public void GetOrAddSetup()
@@ -218,9 +243,13 @@ namespace Benchmark.ThreadsBench
             }
         }
 
+#endif
+
         #endregion
 
         #region ' AddOrUpdate '
+
+#if ADD_OR_UPDATE
 
         [IterationSetup(Target = nameof(AddOrUpdate))]
         public void AddOrUpdateSetup()
@@ -262,9 +291,13 @@ namespace Benchmark.ThreadsBench
             return -1;
         }
 
+#endif
+
         #endregion
 
-        #region ' ContainsKey '
+        #region ' ContainsKey ' 
+
+#if CONTAINS_KEY
 
         [IterationSetup(Target = nameof(Contains))]
         public void ContainsSetup()
@@ -305,7 +338,7 @@ namespace Benchmark.ThreadsBench
                 data.ContainsKey(key + i);
             }
         }
-
+#endif
         #endregion
 
         #region ' Helpers '
