@@ -3,8 +3,8 @@
 
 //#define TRY_ADD
 //#define TRY_GET_VALUE
-#define TRY_REMOVE
-//#define TRY_UPDATE
+//#define TRY_REMOVE
+#define TRY_UPDATE
 //#define GET_OR_ADD
 //#define ADD_OR_UPDATE
 //#define CONTAINS_KEY

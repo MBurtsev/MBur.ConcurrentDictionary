@@ -39,8 +39,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
         private const int GROW_MULTIPLIER = 2;
         // The default array size of counts
         private const int COUNTS_SIZE = 16;
-        // The size for new segments
-        private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
@@ -51,7 +49,8 @@ namespace MBur.Collections.LockFree/*_v2d*/
         private readonly IEqualityComparer<TKey> _keysComparer;
         // To compare values
         private readonly IEqualityComparer<TValue> _valuesComparer;
-        // 
+        // Identifies that the current key or value is of a reference type. 
+        // It is necessary to clear links when releasing buckets pages.
         private readonly bool _isRefenceType;
 
         #region ' Public Interface '
@@ -895,9 +894,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
-                var cabn  = GetCabinet(data);
-
-                PreparePage(cabn);
 
                 while (true)
                 {
@@ -999,7 +995,126 @@ namespace MBur.Collections.LockFree/*_v2d*/
                 ThrowKeyNullException();
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // return if empty
+                    if (sync == (int)RecordStatus.Empty)
+                    {
+                        return false;
+                    }
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.Full)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    // try to get lock
+                    if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                    {
+                        try
+                        {
+                            var link     = frame.Links[index];
+                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                            // check cell 0
+                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, buck.Key0))
+                            {
+                                if (_valuesComparer.Equals(buck.Value0, comparisonValue))
+                                {
+                                    var page = cabn.ReadyPage;
+
+                                    cabn.Buckets[page]        = buck;
+                                    cabn.Buckets[page].Key0   = key;
+                                    cabn.Buckets[page].Value0 = newValue;
+
+                                    frame.Links[index] = new Link(cabn.Id, page);
+
+                                    syncs[index] = sync;
+
+                                    cabn.ReadyPage = -1;
+
+                                    RemoveLink(data, link, cabn.Id);
+
+                                    return true;
+                                }
+                            }
+                            // check cell 1
+                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, buck.Key1))
+                            {
+                                if (_valuesComparer.Equals(buck.Value1, comparisonValue))
+                                {
+                                    var page = cabn.ReadyPage;
+
+                                    cabn.Buckets[page]        = buck;
+                                    cabn.Buckets[page].Key1   = key;
+                                    cabn.Buckets[page].Value1 = newValue;
+
+                                    frame.Links[index] = new Link(cabn.Id, page);
+
+                                    syncs[index] = sync;
+
+                                    cabn.ReadyPage = -1;
+
+                                    RemoveLink(data, link, cabn.Id);
+
+                                    return true;
+                                }
+                            }
+                            // check cell 2
+                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, buck.Key2))
+                            {
+                                if (_valuesComparer.Equals(buck.Value2, comparisonValue))
+                                {
+                                    var page = cabn.ReadyPage;
+
+                                    cabn.Buckets[page]        = buck;
+                                    cabn.Buckets[page].Key2   = key;
+                                    cabn.Buckets[page].Value2 = newValue;
+
+                                    frame.Links[index] = new Link(cabn.Id, page);
+
+                                    syncs[index] = sync;
+
+                                    cabn.ReadyPage = -1;
+
+                                    RemoveLink(data, link, cabn.Id);
+
+                                    return true;
+                                }
+                            }
+
+                            syncs[index] = sync;
+
+                            return false;
+                        }
+                        catch
+                        {
+                            syncs[index] = sync;
+
+                            throw;
+                        }
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>

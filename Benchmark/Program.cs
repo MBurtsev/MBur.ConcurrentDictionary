@@ -31,6 +31,7 @@ namespace Benchmark
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
             //BenchmarkRunner.Run<CountBench>();
 
+            //TryGetTest();
             //Debug();
 
             Console.WriteLine("Complate");
