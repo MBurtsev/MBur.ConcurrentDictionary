@@ -1,9 +1,9 @@
 ﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
-#define TRY_ADD
+//#define TRY_ADD
 //#define TRY_GET_VALUE
-//#define TRY_REMOVE
+#define TRY_REMOVE
 //#define TRY_UPDATE
 //#define GET_OR_ADD
 //#define ADD_OR_UPDATE

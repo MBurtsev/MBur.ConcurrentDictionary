@@ -43,8 +43,8 @@ namespace Benchmark
 
             b.Threads = 4;
 
-            b.AddSetup();
-            b.Add();
+            //b.AddSetup();
+            //b.Add();
 
             //b.TryGetValueSetup();
             //b.TryGetValue();
