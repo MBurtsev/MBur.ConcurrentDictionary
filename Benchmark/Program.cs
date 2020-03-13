@@ -25,13 +25,13 @@ namespace Benchmark
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
             // LockFreeDictionary
-            BenchmarkRunner.Run<LockFreeDictionaryBench>();
+            //BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
             // Wat-Free Count
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
             //BenchmarkRunner.Run<CountBench>();
 
-            //TryGetTest();
+            TryGetTest();
             //Debug();
 
             Console.WriteLine("Complate");
@@ -53,8 +53,8 @@ namespace Benchmark
 
         static void TryGetTest()
         {
-            var readers = 2;
-            var writes  = 4;
+            var readers = 4;
+            var writes  = 2;
             var cd = new ConcurrentDictionary<int, KeyValuePair<long, long>>();
 
             for (var threads = 0; threads < writes; ++threads)
@@ -78,7 +78,7 @@ namespace Benchmark
 
                         if (item.Key != item.Value)
                         {
-                            Console.WriteLine($"Uh oh! Torn item: {item.Key} != {item.Value}");
+                            Console.WriteLine($"WRITER_DELAY must be increased {item.Key} != {item.Value}");
                         }
                     }
                 });

@@ -801,10 +801,10 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(item), SR.ConcurrentDictionary_ItemKeyIsNull);
             }
 
-            var data = _data;
+            var data  = _data;
             var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
+            var comp  = _keysComparer;
+            var hash  = comp.GetHashCode(key) & 0x7fffffff;
 
             unchecked
             {
@@ -812,7 +812,7 @@ namespace MBur.Collections.LockFree_v1
                 {
                     var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var sync  = syncs[index];
 
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
@@ -829,8 +829,8 @@ namespace MBur.Collections.LockFree_v1
                     }
 
                     var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-                    var flag = sync | (int)RecordStatus.Removing;
+                    var vals  = frame.ValuesTable;
+                    var flag  = sync | (int)RecordStatus.Removing;
 
                     // try to get lock
                     if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
@@ -844,14 +844,13 @@ namespace MBur.Collections.LockFree_v1
                             {
                                 if (_valuesComparer.Equals(val, vals[index].Value0))
                                 {
-                                    keyst[index].Key0 = default;
+                                    sync ^= (int)RecordStatus.HasValue0;
+
+                                    keyst[index].Key0  = default;
                                     vals[index].Value0 = default;
-                                    syncs[index] = sync ^ (int)RecordStatus.HasValue0;
                                 }
                                 else
                                 {
-                                    syncs[index] = sync;
-
                                     return false;
                                 }
                             }
@@ -860,14 +859,13 @@ namespace MBur.Collections.LockFree_v1
                             {
                                 if (_valuesComparer.Equals(val, vals[index].Value1))
                                 {
-                                    keyst[index].Key1 = default;
+                                    sync ^= (int)RecordStatus.HasValue1;
+
+                                    keyst[index].Key1  = default;
                                     vals[index].Value1 = default;
-                                    syncs[index] = sync ^ (int)RecordStatus.HasValue1;
                                 }
                                 else
                                 {
-                                    syncs[index] = sync;
-
                                     return false;
                                 }
                             }
@@ -876,14 +874,13 @@ namespace MBur.Collections.LockFree_v1
                             {
                                 if (_valuesComparer.Equals(val, vals[index].Value2))
                                 {
-                                    keyst[index].Key2 = default;
+                                    sync ^= (int)RecordStatus.HasValue2;
+
+                                    keyst[index].Key2  = default;
                                     vals[index].Value2 = default;
-                                    syncs[index] = sync ^ (int)RecordStatus.HasValue2;
                                 }
                                 else
                                 {
-                                    syncs[index] = sync;
-
                                     return false;
                                 }
                             }
@@ -892,22 +889,19 @@ namespace MBur.Collections.LockFree_v1
                             {
                                 if (_valuesComparer.Equals(val, vals[index].Value3))
                                 {
-                                    keyst[index].Key3 = default;
+                                    sync ^= (int)RecordStatus.HasValue3;
+                                    
+                                    keyst[index].Key3  = default;
                                     vals[index].Value3 = default;
-                                    syncs[index] = sync ^ (int)RecordStatus.HasValue3;
                                 }
                                 else
                                 {
-                                    syncs[index] = sync;
-
                                     return false;
                                 }
                             }
                             // key not exist
                             else
                             {
-                                syncs[index] = sync;
-
                                 return false;
                             }
 
@@ -915,11 +909,9 @@ namespace MBur.Collections.LockFree_v1
 
                             return true;
                         }
-                        catch
+                        finally
                         {
                             syncs[index] = sync;
-
-                            throw;
                         }
                     }
 
@@ -947,10 +939,10 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var data = _data;
+            var data  = _data;
             var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
+            var comp  = _keysComparer;
+            var hash  = comp.GetHashCode(key) & 0x7fffffff;
 
             unchecked
             {
@@ -958,7 +950,7 @@ namespace MBur.Collections.LockFree_v1
                 {
                     var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var sync  = syncs[index];
 
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
@@ -977,8 +969,8 @@ namespace MBur.Collections.LockFree_v1
                     }
 
                     var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-                    var flag = sync | (int)RecordStatus.Removing;
+                    var vals  = frame.ValuesTable;
+                    var flag  = sync | (int)RecordStatus.Removing;
 
                     // try to get lock
                     if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
@@ -990,44 +982,46 @@ namespace MBur.Collections.LockFree_v1
                             // check cell 0
                             if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, keys.Key0))
                             {
+                                sync ^= (int)RecordStatus.HasValue0;
+
                                 value = vals[index].Value0;
 
-                                keyst[index].Key0 = default;
+                                keyst[index].Key0  = default;
                                 vals[index].Value0 = default;
-                                syncs[index] = sync ^ (int)RecordStatus.HasValue0;
                             }
                             // check cell 1
                             else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
                             {
+                                sync ^= (int)RecordStatus.HasValue1;
+
                                 value = vals[index].Value1;
 
-                                keyst[index].Key1 = default;
+                                keyst[index].Key1  = default;
                                 vals[index].Value1 = default;
-                                syncs[index] = sync ^ (int)RecordStatus.HasValue1;
                             }
                             // check cell 2
                             else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
                             {
+                                sync ^= (int)RecordStatus.HasValue2;
+
                                 value = vals[index].Value2;
 
-                                keyst[index].Key2 = default;
+                                keyst[index].Key2  = default;
                                 vals[index].Value2 = default;
-                                syncs[index] = sync ^ (int)RecordStatus.HasValue2;
                             }
                             // check cell 3
                             else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
                             {
+                                sync ^= (int)RecordStatus.HasValue3;
+
                                 value = vals[index].Value3;
 
-                                keyst[index].Key3 = default;
+                                keyst[index].Key3  = default;
                                 vals[index].Value3 = default;
-                                syncs[index] = sync ^ (int)RecordStatus.HasValue3;
                             }
                             // key not exist
                             else
                             {
-                                syncs[index] = sync;
-
                                 value = default;
 
                                 return false;
@@ -1037,11 +1031,9 @@ namespace MBur.Collections.LockFree_v1
 
                             return true;
                         }
-                        catch
+                        finally
                         {
                             syncs[index] = sync;
-
-                            throw;
                         }
                     }
 
