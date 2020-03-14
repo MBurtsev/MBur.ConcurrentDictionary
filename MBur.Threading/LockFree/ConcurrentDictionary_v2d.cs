@@ -40,7 +40,7 @@ namespace MBur.Collections.LockFree/*_v2d*/
         // The default array size of counts
         private const int COUNTS_SIZE = 16;
         //
-        private const int WRITER_DELAY = 8;
+        private const int WRITER_DELAY = 2048;
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
@@ -389,11 +389,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
             }
             set
             {
-                if (key == null)
-                {
-                    ThrowKeyNullException();
-                }
-
                 AddOrUpdate(key, value, value);
             }
         }
@@ -468,7 +463,7 @@ namespace MBur.Collections.LockFree/*_v2d*/
 
             // Each change occurs in a new area of memory. The operability of this 
             // function is provided by the time-lag effect. When a thread loses a 
-            // quantum of time when switching tasks, its expectation of a new quantum 
+            // time quantum when switching tasks, its expectation of a new quantum 
             // is much less than the time when a page can be reused for recording.
 
             unchecked
@@ -478,7 +473,7 @@ namespace MBur.Collections.LockFree/*_v2d*/
                 var frame     = data.Frame;
                 var index     = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
                 var sync      = frame.SyncTable[index];
-                var link      = frame.Links[index];
+                ref var link  = ref frame.Links[index];
                 ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                 // check cell 0
@@ -1377,17 +1372,17 @@ namespace MBur.Collections.LockFree/*_v2d*/
                         continue;
                     }
 
-                    var link = frame.Links[index];
-                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
 
                     // Check that there is at least one free space
                     if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
                     {
-                        var flag = sync | (int)RecordStatus.Adding;
-
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync))
                         {
+                            var link = frame.Links[index];
+                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
                             try
                             {
                                 // add to cell 0
@@ -1401,14 +1396,13 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key1   = key;
                                         cabn.Buckets[page].Value1 = updateValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
+                                        
+                                        RemoveLink(data, link, cabn.Id);
 
                                         syncs[index] = sync;
-
-                                        cabn.ReadyPage = -1;
-
-                                        RemoveLink(data, link, cabn.Id);
 
                                         return updateValue;
                                     }
@@ -1420,14 +1414,13 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key2   = key;
                                         cabn.Buckets[page].Value2 = updateValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
+                                                                               
+                                        RemoveLink(data, link, cabn.Id);
 
                                         syncs[index] = sync;
-
-                                        cabn.ReadyPage = -1;
-
-                                        RemoveLink(data, link, cabn.Id);
 
                                         return updateValue;
                                     }
@@ -1437,8 +1430,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                     {
                                         cabn.Buckets[link.Positon].Key0   = key;
                                         cabn.Buckets[link.Positon].Value0 = addValue;
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue0;
                                     }
                                     else
                                     {
@@ -1447,15 +1438,14 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key0   = key;
                                         cabn.Buckets[page].Value0 = addValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue0;
-
-                                        cabn.ReadyPage = -1;
-
+                                                                               
                                         RemoveLink(data, link, cabn.Id);
                                     }
+
+                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
                                 }
                                 // add to cell 1
                                 else if ((sync & (int)RecordStatus.HasValue1) == 0)
@@ -1468,14 +1458,13 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key0   = key;
                                         cabn.Buckets[page].Value0 = updateValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
 
-                                        syncs[index] = sync;
-
-                                        cabn.ReadyPage = -1;
-
                                         RemoveLink(data, link, cabn.Id);
+
+                                        syncs[index] = sync;
 
                                         return updateValue;
                                     }
@@ -1487,14 +1476,13 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key2   = key;
                                         cabn.Buckets[page].Value2 = updateValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
 
-                                        syncs[index] = sync;
-
-                                        cabn.ReadyPage = -1;
-
                                         RemoveLink(data, link, cabn.Id);
+
+                                        syncs[index] = sync;
 
                                         return updateValue;
                                     }
@@ -1504,8 +1492,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                     {
                                         cabn.Buckets[link.Positon].Key1   = key;
                                         cabn.Buckets[link.Positon].Value1 = addValue;
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue1;
                                     }
                                     else
                                     {
@@ -1514,15 +1500,14 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key1   = key;
                                         cabn.Buckets[page].Value1 = addValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
 
-                                        syncs[index] = sync | (int)RecordStatus.HasValue1;
-
-                                        cabn.ReadyPage = -1;
-
                                         RemoveLink(data, link, cabn.Id);
                                     }
+                                        
+                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
                                 }
                                 // add to cell 2
                                 else
@@ -1535,14 +1520,13 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key0   = key;
                                         cabn.Buckets[page].Value0 = updateValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
 
-                                        syncs[index] = sync;
-
-                                        cabn.ReadyPage = -1;
-
                                         RemoveLink(data, link, cabn.Id);
+
+                                        syncs[index] = sync;
 
                                         return updateValue;
                                     }
@@ -1554,14 +1538,13 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key1   = key;
                                         cabn.Buckets[page].Value1 = updateValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
 
-                                        syncs[index] = sync;
-
-                                        cabn.ReadyPage = -1;
-
                                         RemoveLink(data, link, cabn.Id);
+
+                                        syncs[index] = sync;
 
                                         return updateValue;
                                     }
@@ -1571,8 +1554,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                     {
                                         cabn.Buckets[link.Positon].Key2   = key;
                                         cabn.Buckets[link.Positon].Value2 = addValue;
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue2;
                                     }
                                     else
                                     {
@@ -1581,15 +1562,14 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                         cabn.Buckets[page]        = buck;
                                         cabn.Buckets[page].Key2   = key;
                                         cabn.Buckets[page].Value2 = addValue;
+                                        cabn.ReadyPage            = -1;
 
                                         frame.Links[index] = new Link(cabn.Id, page);
 
-                                        syncs[index] = sync | (int)RecordStatus.HasValue2;
-
-                                        cabn.ReadyPage = -1;
-
                                         RemoveLink(data, link, cabn.Id);
                                     }
+
+                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
                                 }
 
                                 IncrementCount(data);
@@ -1607,6 +1587,9 @@ namespace MBur.Collections.LockFree/*_v2d*/
                     // growing
                     else
                     {
+                        var link = frame.Links[index];
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
                         // update cell 0
                         if (comp.Equals(key, buck.Key0))
                         {
@@ -1619,12 +1602,9 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                     cabn.Buckets[page]        = buck;
                                     cabn.Buckets[page].Key0   = key;
                                     cabn.Buckets[page].Value0 = updateValue;
+                                    cabn.ReadyPage            = -1;
 
                                     frame.Links[index] = new Link(cabn.Id, page);
-
-                                    syncs[index] = sync;
-
-                                    cabn.ReadyPage = -1;
 
                                     RemoveLink(data, link, cabn.Id);
 
@@ -1654,12 +1634,9 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                     cabn.Buckets[page]        = buck;
                                     cabn.Buckets[page].Key1   = key;
                                     cabn.Buckets[page].Value1 = updateValue;
-
+                                    cabn.ReadyPage            = -1;
+                                    
                                     frame.Links[index] = new Link(cabn.Id, page);
-
-                                    syncs[index] = sync;
-
-                                    cabn.ReadyPage = -1;
 
                                     RemoveLink(data, link, cabn.Id);
 
@@ -1689,12 +1666,9 @@ namespace MBur.Collections.LockFree/*_v2d*/
                                     cabn.Buckets[page]        = buck;
                                     cabn.Buckets[page].Key2   = key;
                                     cabn.Buckets[page].Value2 = updateValue;
+                                    cabn.ReadyPage            = -1;
 
                                     frame.Links[index] = new Link(cabn.Id, page);
-
-                                    syncs[index] = sync;
-
-                                    cabn.ReadyPage = -1;
 
                                     RemoveLink(data, link, cabn.Id);
 
@@ -3026,7 +3000,7 @@ namespace MBur.Collections.LockFree/*_v2d*/
                 ReadyPage   = -1;
                 Position    = 1;
                 GuestsTable = new Guest[0];
-                Buckets     = new Bucket[16];
+                Buckets     = new Bucket[WRITER_DELAY * 4];
            }
 
             // owner id
@@ -3073,21 +3047,6 @@ namespace MBur.Collections.LockFree/*_v2d*/
             public int[] WriterBuffer;
         }
 
-        // 
-        private struct Link
-        {
-            public Link(int id, int position)
-            {
-                Id = id;
-                Positon = position;
-            }
-                
-            // owner id
-            public int Id;
-            // entry index
-            public int Positon;
-        }
-
         //
         [DebuggerDisplay("Next = {Next}, {Key0}/{Value0}, {Key1}/{Value1}, {Key2}/{Value2}")]
         private struct Bucket
@@ -3099,6 +3058,19 @@ namespace MBur.Collections.LockFree/*_v2d*/
             public TValue   Value1;
             public TValue   Value2;
             public int      Next;
+        }
+
+        internal struct Link
+        {
+            public Link(int id, int position)
+            {
+                Id = id;
+                Positon = position;
+            }
+
+            public int Id;
+            // entry index
+            public int Positon;
         }
 
         /// <summary>
@@ -3276,6 +3248,7 @@ namespace MBur.Collections.LockFree/*_v2d*/
             }
         }
 
+
         #endregion
 
         #region ' Helpers '
@@ -3361,6 +3334,34 @@ namespace MBur.Collections.LockFree/*_v2d*/
         public long Count;
     }
 
+    // 
+    [StructLayout(LayoutKind.Explicit, Size = 8)]
+    internal struct Link2
+    {
+        public Link2(long view)
+        {
+            Id        = 0;
+            Positon   = 0;
+            Int64View = view;
+        }
+
+        public Link2(int id, int position)
+        {
+            Int64View = 0;
+            Id        = id;
+            Positon   = position;
+        }
+
+        [FieldOffset(0)]
+        public long Int64View;
+        // owner id
+        [FieldOffset(0)]
+        public int Id;
+        // entry index
+        [FieldOffset(4)]
+        public int Positon;
+    }
+
 
     /// <summary>
     ///     A size greater than or equal to the size of the most common CPU cache lines.
@@ -3400,3 +3401,4 @@ namespace MBur.Collections.LockFree/*_v2d*/
         }
     }
 }
+//Volatile.Write(ref frame.Links[index].Int64View, new Link(cabn.Id, page).Int64View);

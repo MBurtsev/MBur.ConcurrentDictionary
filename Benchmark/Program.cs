@@ -61,9 +61,16 @@ namespace Benchmark
             {
                 Task.Run(() =>
                 {
-                    for (long i = 0; ; i++)
+                    try
                     {
-                        cd[0] = new KeyValuePair<long, long>(i, i);
+                        for (long i = 0; ; i++)
+                        {
+                            cd[0] = new KeyValuePair<long, long>(i, i);
+                        }
+                    }
+                    catch(Exception e)
+                    {
+                        Console.WriteLine(e);
                     }
                 });
             }
@@ -72,14 +79,21 @@ namespace Benchmark
             {
                 Task.Run(() =>
                 {
-                    while (true)
-                    {
-                        cd.TryGetValue(0, out KeyValuePair<long, long> item);
-
-                        if (item.Key != item.Value)
+                    try
+                    { 
+                        while (true)
                         {
-                            Console.WriteLine($"WRITER_DELAY must be increased {item.Key} != {item.Value}");
+                            cd.TryGetValue(0, out KeyValuePair<long, long> item);
+
+                            if (item.Key != item.Value)
+                            {
+                                Console.WriteLine($"WRITER_DELAY must be increased {item.Key} != {item.Value}");
+                            }
                         }
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
                     }
                 });
             }
