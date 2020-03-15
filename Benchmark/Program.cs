@@ -54,7 +54,7 @@ namespace Benchmark
         static void TryGetTest()
         {
             var readers = 4;
-            var writes  = 2;
+            var writes  = 4;
             var cd = new ConcurrentDictionary<int, KeyValuePair<long, long>>();
 
             for (var threads = 0; threads < writes; ++threads)
