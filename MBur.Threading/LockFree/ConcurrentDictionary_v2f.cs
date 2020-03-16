@@ -759,9 +759,9 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     if (
                             (sync & (int)RecordStatus.HasValue) == 0 
                                             || 
-                            comp.Equals(key, buck.Key)
+                            !comp.Equals(key, buck.Key)
                                             ||
-                            _valuesComparer.Equals(buck.Value, comparisonValue)
+                            !_valuesComparer.Equals(buck.Value, comparisonValue)
                        )
                     {
                         return false;
