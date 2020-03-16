@@ -387,11 +387,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
             }
             set
             {
-                if (key == null)
-                {
-                    ThrowKeyNullException();
-                }
-
                 AddOrUpdate(key, value, value);
             }
         }
@@ -1203,7 +1198,109 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 throw new ArgumentNullException(nameof(updateValueFactory));
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                // search empty space
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
+                    {
+                        // try to get lock
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
+                        {
+                            try
+                            {
+                                var value = addValueFactory(key, factoryArgument);
+                                var page  = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                RemoveLink(data, link, cabn.Id);
+
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
+
+                                IncrementCount(data);
+
+                                return value;
+                            }
+                            catch
+                            {
+                                syncs[index] = sync;
+
+                                throw;
+                            }
+                        }
+                    }
+                    // growing
+                    else
+                    {
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                        // check exist
+                        if (comp.Equals(key, buck.Key))
+                        {
+                            if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
+                            {
+                                try
+                                {
+                                    var value = updateValueFactory(key, buck.Value, factoryArgument);
+                                    var page  = cabn.ReadyPage;
+
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = value;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                    RemoveLink(data, link, cabn.Id);
+
+                                    return value;
+                                }
+                                finally
+                                {
+                                    syncs[index] = sync;
+                                }
+                            }
+                            else
+                            {
+                                frame = Volatile.Read(ref data.Frame);
+
+                                continue;
+                            }
+                        }
+
+                        GrowTable(data);
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
@@ -1242,7 +1339,109 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 throw new ArgumentNullException(nameof(updateValueFactory));
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                // search empty space
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
+                    {
+                        // try to get lock
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
+                        {
+                            try
+                            {
+                                var value = addValueFactory(key);
+                                var page  = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                RemoveLink(data, link, cabn.Id);
+
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
+
+                                IncrementCount(data);
+
+                                return value;
+                            }
+                            catch
+                            {
+                                syncs[index] = sync;
+
+                                throw;
+                            }
+                        }
+                    }
+                    // growing
+                    else
+                    {
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                        // check exist
+                        if (comp.Equals(key, buck.Key))
+                        {
+                            if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
+                            {
+                                try
+                                {
+                                    var value = updateValueFactory(key, buck.Value);
+                                    var page  = cabn.ReadyPage;
+
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = value;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                    RemoveLink(data, link, cabn.Id);
+
+                                    return value;
+                                }
+                                finally
+                                {
+                                    syncs[index] = sync;
+                                }
+                            }
+                            else
+                            {
+                                frame = Volatile.Read(ref data.Frame);
+
+                                continue;
+                            }
+                        }
+
+                        GrowTable(data);
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
@@ -1274,7 +1473,108 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 throw new ArgumentNullException(nameof(updateValueFactory));
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                // search empty space
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
+                    {
+                        // try to get lock
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
+                        {
+                            try
+                            {
+                                var page  = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = addValue;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                RemoveLink(data, link, cabn.Id);
+
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
+
+                                IncrementCount(data);
+
+                                return addValue;
+                            }
+                            catch
+                            {
+                                syncs[index] = sync;
+
+                                throw;
+                            }
+                        }
+                    }
+                    // growing
+                    else
+                    {
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                        // check exist
+                        if (comp.Equals(key, buck.Key))
+                        {
+                            if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
+                            {
+                                try
+                                {
+                                    var value = updateValueFactory(key, buck.Value);
+                                    var page  = cabn.ReadyPage;
+
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = value;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                    RemoveLink(data, link, cabn.Id);
+
+                                    return value;
+                                }
+                                finally
+                                {
+                                    syncs[index] = sync;
+                                }
+                            }
+                            else
+                            {
+                                frame = Volatile.Read(ref data.Frame);
+
+                                continue;
+                            }
+                        }
+
+                        GrowTable(data);
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
@@ -2822,7 +3122,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
         }
 
         //
-        [DebuggerDisplay("{Key0}/{Value0}, {Key1}/{Value1}, {Key2}/{Value2}")]
+        [DebuggerDisplay("{Key0}/{Value0}")]
         private struct Bucket
         {
             public TKey     Key;
