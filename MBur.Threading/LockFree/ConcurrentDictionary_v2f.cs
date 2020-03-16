@@ -3178,15 +3178,11 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     ref var link  = ref frame.Links[_index];
                     ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                    // check cell 0
-                    if ((sync & (int)RecordStatus.HasValue) != 0)
-                    {
-                        Current = new KeyValuePair<TKey, TValue>(buck.Key, buck.Value);
-
-                        return true;
-                    }
+                    Current = new KeyValuePair<TKey, TValue>(buck.Key, buck.Value);
 
                     _index++;
+
+                    return true;
                 }
             }
 
