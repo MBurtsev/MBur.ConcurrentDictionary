@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree_v2d
+namespace MBur.Collections.LockFree/*_v2f*/
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -36,11 +36,13 @@ namespace MBur.Collections.LockFree_v2d
         // The default value that is used if the user has not specified a capacity.
         private const int DEFAULT_CAPACITY = 127;
         // The multiplier is used when expanding the array.
-        private const int GROW_MULTIPLIER = 2;
+        private const int GROW_MULTIPLIER = 3;
         // The default array size of counts
         private const int COUNTS_SIZE = 16;
+        // The size for first segments
+        private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
         // The number of operations through which the page will be allowed to be used again.
-        private const int WRITER_DELAY = 32;
+        private const int WRITER_DELAY = 4096;
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
@@ -51,9 +53,6 @@ namespace MBur.Collections.LockFree_v2d
         private readonly IEqualityComparer<TKey> _keysComparer;
         // To compare values
         private readonly IEqualityComparer<TValue> _valuesComparer;
-        // Identifies that the current key or value is of a reference type. 
-        // It is necessary to clear links when releasing buckets pages.
-        private readonly bool _isRefenceType;
 
         #region ' Public Interface '
 
@@ -201,7 +200,6 @@ namespace MBur.Collections.LockFree_v2d
             _keysComparer   = keysComparer ?? EqualityComparer<TKey>.Default;
             _valuesComparer = valuesComparer;
             _data           = new HashTableData(capacity, COUNTS_SIZE);
-            _isRefenceType  = typeof(TKey).IsClass | typeof(TValue).IsClass;
         }
 
         #region ' Deprecated '
@@ -389,6 +387,11 @@ namespace MBur.Collections.LockFree_v2d
             }
             set
             {
+                if (key == null)
+                {
+                    ThrowKeyNullException();
+                }
+
                 AddOrUpdate(key, value, value);
             }
         }
@@ -418,20 +421,12 @@ namespace MBur.Collections.LockFree_v2d
                 var index = hash % frame.HashMaster;
                 var sync  = frame.SyncTable[index];
                 var link  = frame.Links[index];
-                ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
+                var buck  = data.Cabinets[link.Id].Buckets[link.Positon];
 
                 if (
-                        (sync & (int)RecordStatus.HasValue0) != 0
+                        (sync & (int)RecordStatus.HasValue) != 0
                                     &&
-                        comp.Equals(key, buck.Key0)
-                                    ||
-                        (sync & (int)RecordStatus.HasValue1) != 0
-                                    &&
-                        comp.Equals(key, buck.Key1)
-                                    ||
-                        (sync & (int)RecordStatus.HasValue2) != 0
-                                    &&
-                        comp.Equals(key, buck.Key2)
+                        comp.Equals(key, buck.Key)
                    )
                 {
                     return true;
@@ -461,11 +456,6 @@ namespace MBur.Collections.LockFree_v2d
                 ThrowKeyNullException();
             }
 
-            // Each change occurs in a new area of memory. The operability of this 
-            // function is provided by the time-lag effect. When a thread loses a 
-            // time quantum when switching tasks, its expectation of a new quantum 
-            // is much less than the time when a page can be reused for recording.
-
             unchecked
             {
                 var data      = _data;
@@ -478,36 +468,12 @@ namespace MBur.Collections.LockFree_v2d
 
                 // check cell 0
                 if (
-                        (sync & (int)RecordStatus.HasValue0) != 0
+                        (sync & (int)RecordStatus.HasValue) != 0
                                     &&
-                        comp.Equals(key, buck.Key0)
+                        comp.Equals(key, buck.Key)
                    )
                 {
-                    value = buck.Value0;
-
-                    return true;
-                }
-
-                // check cell 1
-                if (
-                        (sync & (int)RecordStatus.HasValue1) != 0
-                                    &&
-                        comp.Equals(key, buck.Key1)
-                   )
-                {
-                    value = buck.Value1;
-
-                    return true;
-                }
-
-                // check cell 2
-                if (
-                        (sync & (int)RecordStatus.HasValue2) != 0
-                                    &&
-                        comp.Equals(key, buck.Key2)
-                   )
-                {
-                    value = buck.Value2;
+                    value = buck.Value;
 
                     return true;
                 }
@@ -562,181 +528,56 @@ namespace MBur.Collections.LockFree_v2d
                     var sync  = syncs[index];
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var link = frame.Links[index];
-                                ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+                                var page = cabn.ReadyPage;
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // check exist
-                                    if (
-                                            (sync & (int)RecordStatus.HasValue1) != 0
-                                                        &&
-                                            comp.Equals(key, buck.Key1)
-                                                        ||
-                                            (sync & (int)RecordStatus.HasValue2) != 0
-                                                        &&
-                                            comp.Equals(key, buck.Key2)
-                                        )
-                                    {
-                                        syncs[index] = sync;
+                                cabn.Buckets[page].Key = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage = -1;
 
-                                        return false;
-                                    }
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                    if (cabn.Id == link.Id)
-                                    {
-                                        cabn.Buckets[link.Positon].Key0   = key;
-                                        cabn.Buckets[link.Positon].Value0 = value;
+                                RemoveLink(data, link, cabn.Id);
 
-                                        syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                    }
-                                    else
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key0   = key;
-                                        cabn.Buckets[page].Value0 = value;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue0;
-
-                                        cabn.ReadyPage = -1;
-
-                                        RemoveLink(data, link, cabn.Id);
-                                    }
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // check exist
-                                    if (
-                                            comp.Equals(key, buck.Key0)
-                                                        ||
-                                            (sync & (int)RecordStatus.HasValue2) != 0
-                                                        &&
-                                            comp.Equals(key, buck.Key2)
-                                        )
-                                    {
-                                        syncs[index] = sync;
-
-                                        return false;
-                                    }
-
-                                    if (cabn.Id == link.Id)
-                                    {
-                                        cabn.Buckets[link.Positon].Key1   = key;
-                                        cabn.Buckets[link.Positon].Value1 = value;
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                    }
-                                    else
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key1   = key;
-                                        cabn.Buckets[page].Value1 = value;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue1;
-
-                                        cabn.ReadyPage = -1;
-
-                                        RemoveLink(data, link, cabn.Id);
-                                    }
-
-                                }
-                                // add to cell 2
-                                else
-                                {
-                                    // check exist
-                                    if (
-                                            comp.Equals(key, buck.Key0)
-                                                        ||
-                                            comp.Equals(key, buck.Key1)
-                                        )
-                                    {
-                                        syncs[index] = sync;
-
-                                        return false;
-                                    }
-
-                                    if (cabn.Id == link.Id)
-                                    {
-                                        cabn.Buckets[link.Positon].Key2   = key;
-                                        cabn.Buckets[link.Positon].Value2 = value;
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                    }
-                                    else
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key2   = key;
-                                        cabn.Buckets[page].Value2 = value;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        syncs[index] = sync | (int)RecordStatus.HasValue2;
-
-                                        cabn.ReadyPage = -1;
-
-                                        RemoveLink(data, link, cabn.Id);
-                                    }
-
-                                }
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
                                 return true;
                             }
-                            catch
+                            finally
                             {
                                 syncs[index] = sync;
-
-                                throw;
                             }
                         }
                     }
                     // growing
                     else
                     {
-                        var link = frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
-                        if (
-                                comp.Equals(key, buck.Key0)
-                                            ||
-                                comp.Equals(key, buck.Key1)
-                                            ||
-                                comp.Equals(key, buck.Key2)
-                            )
+                        if (comp.Equals(key, buck.Key))
                         {
                             return false;
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -769,111 +610,7 @@ namespace MBur.Collections.LockFree_v2d
                 throw new ArgumentNullException(nameof(item), SR.ConcurrentDictionary_ItemKeyIsNull);
             }
 
-            unchecked
-            {
-                var data  = _data;
-                var frame = data.Frame;
-                var comp  = _keysComparer;
-                var hash  = comp.GetHashCode(key) & 0x7fffffff;
-
-                while (true)
-                {
-                    var syncs = frame.SyncTable;
-                    var index = hash % frame.HashMaster;
-                    var sync  = syncs[index];
-
-                    // return if empty
-                    if (sync == (int)RecordStatus.Empty)
-                    {
-                        return false;
-                    }
-
-                    // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
-                    {
-                        frame = Volatile.Read(ref data.Frame);
-
-                        continue;
-                    }
-
-                    // try to get lock
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Removing, sync))
-                    {
-                        try
-                        {
-                            var link     = frame.Links[index];
-                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
-
-                            // check cell 0
-                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, buck.Key0))
-                            {
-                                if (_valuesComparer.Equals(val, buck.Value0))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue0;
-
-                                    if (sync == (int)RecordStatus.Empty)
-                                    {
-                                        RemoveLink(data, link, GetCabinet(data).Id);
-                                    }
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // check cell 1
-                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, buck.Key1))
-                            {
-                                if (_valuesComparer.Equals(val, buck.Value1))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue1;
-
-                                    if (sync == (int)RecordStatus.Empty)
-                                    {
-                                        RemoveLink(data, link, GetCabinet(data).Id);
-                                    }
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // check cell 2
-                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, buck.Key2))
-                            {
-                                if (_valuesComparer.Equals(val, buck.Value2))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue2;
-
-                                    if (sync == (int)RecordStatus.Empty)
-                                    {
-                                        RemoveLink(data, link, GetCabinet(data).Id);
-                                    }
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // key not exist
-                            else
-                            {
-                                return false;
-                            }
-
-                            DecrementCount(data);
-
-                            return true;
-                        }
-                        finally
-                        {
-                            syncs[index] = sync;
-                        }
-                    }
-
-                    frame = Volatile.Read(ref data.Frame);
-                }
-            }
+            throw new Exception();
         }
 
         /// <summary>
@@ -917,72 +654,44 @@ namespace MBur.Collections.LockFree_v2d
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
+                    ref var link = ref frame.Links[index];
+                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                    // check
+                    if (!comp.Equals(key, buck.Key))
+                    {
+                        value = default;
+
+                        return false;
+                    }
+
                     // try to get lock
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Removing, sync))
+                    if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Removing, sync) == sync)
                     {
                         try
                         {
-                            var link     = frame.Links[index];
-                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+                            value = buck.Value;
 
-                            // check cell 0
-                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, buck.Key0))
-                            {
-                                sync ^= (int)RecordStatus.HasValue0;
+                            RemoveLink(data, link, GetCabinet(data).Id);
 
-                                value = buck.Value0;
-
-                                if (sync == (int)RecordStatus.Empty)
-                                {
-                                    RemoveLink(data, link, GetCabinet(data).Id);
-                                }
-                            }
-                            // check cell 1
-                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, buck.Key1))
-                            {
-                                sync ^= (int)RecordStatus.HasValue1;
-
-                                value = buck.Value1;
-
-                                if (sync == (int)RecordStatus.Empty)
-                                {
-                                    RemoveLink(data, link, GetCabinet(data).Id);
-                                }
-                            }
-                            // check cell 2
-                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, buck.Key2))
-                            {
-                                sync ^= (int)RecordStatus.HasValue2;
-
-                                value = buck.Value2;
-
-                                if (sync == (int)RecordStatus.Empty)
-                                {
-                                    RemoveLink(data, link, GetCabinet(data).Id);
-                                }
-                            }
-                            // key not exist
-                            else
-                            {
-                                value = default;
-
-                                return false;
-                            }
+                            syncs[index] = sync ^ (int)RecordStatus.HasValue;
 
                             DecrementCount(data);
 
                             return true;
                         }
-                        finally
+                        catch
                         {
                             syncs[index] = sync;
+
+                            throw;
                         }
                     }
 
@@ -1036,97 +745,46 @@ namespace MBur.Collections.LockFree_v2d
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
+                    ref var link = ref frame.Links[index];
+                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                    // check cell 0
+                    if (
+                            (sync & (int)RecordStatus.HasValue) == 0 
+                                            || 
+                            comp.Equals(key, buck.Key)
+                                            ||
+                            _valuesComparer.Equals(buck.Value, comparisonValue)
+                       )
+                    {
+                        return false;
+                    }
+
                     // try to get lock
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                    if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                     {
                         try
                         {
-                            var link     = frame.Links[index];
-                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+                            var page = cabn.ReadyPage;
 
-                            // check cell 0
-                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, buck.Key0))
-                            {
-                                if (_valuesComparer.Equals(buck.Value0, comparisonValue))
-                                {
-                                    var page = cabn.ReadyPage;
+                            cabn.Buckets[page].Key   = key;
+                            cabn.Buckets[page].Value = newValue;
+                            cabn.ReadyPage           = -1;
 
-                                    cabn.Buckets[page]        = buck;
-                                    cabn.Buckets[page].Key0   = key;
-                                    cabn.Buckets[page].Value0 = newValue;
+                            frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                    frame.Links[index] = new Link(cabn.Id, page);
-
-                                    syncs[index] = sync;
-
-                                    cabn.ReadyPage = -1;
-
-                                    RemoveLink(data, link, cabn.Id);
-
-                                    return true;
-                                }
-                            }
-                            // check cell 1
-                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, buck.Key1))
-                            {
-                                if (_valuesComparer.Equals(buck.Value1, comparisonValue))
-                                {
-                                    var page = cabn.ReadyPage;
-
-                                    cabn.Buckets[page]        = buck;
-                                    cabn.Buckets[page].Key1   = key;
-                                    cabn.Buckets[page].Value1 = newValue;
-
-                                    frame.Links[index] = new Link(cabn.Id, page);
-
-                                    syncs[index] = sync;
-
-                                    cabn.ReadyPage = -1;
-
-                                    RemoveLink(data, link, cabn.Id);
-
-                                    return true;
-                                }
-                            }
-                            // check cell 2
-                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, buck.Key2))
-                            {
-                                if (_valuesComparer.Equals(buck.Value2, comparisonValue))
-                                {
-                                    var page = cabn.ReadyPage;
-
-                                    cabn.Buckets[page]        = buck;
-                                    cabn.Buckets[page].Key2   = key;
-                                    cabn.Buckets[page].Value2 = newValue;
-
-                                    frame.Links[index] = new Link(cabn.Id, page);
-
-                                    syncs[index] = sync;
-
-                                    cabn.ReadyPage = -1;
-
-                                    RemoveLink(data, link, cabn.Id);
-
-                                    return true;
-                                }
-                            }
-
-                            syncs[index] = sync;
-
-                            return false;
+                            RemoveLink(data, link, cabn.Id);
                         }
-                        catch
+                        finally
                         {
                             syncs[index] = sync;
-
-                            throw;
                         }
                     }
 
@@ -1350,11 +1008,11 @@ namespace MBur.Collections.LockFree_v2d
                 ThrowKeyNullException();
             }
 
-            var data = _data;
+            var data  = _data;
             var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-            var cabn = GetCabinet(data);
+            var comp  = _keysComparer;
+            var hash  = comp.GetHashCode(key) & 0x7fffffff;
+            var cabn  = GetCabinet(data);
 
             PreparePage(cabn);
 
@@ -1365,215 +1023,36 @@ namespace MBur.Collections.LockFree_v2d
                 {
                     var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var sync  = syncs[index];
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
+                    ref var link = ref frame.Links[index];
 
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    // addiing mode
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
-                            var link = frame.Links[index];
-                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
-
                             try
                             {
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // update cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, buck.Key1))
-                                    {
-                                        var page = cabn.ReadyPage;
+                                var page = cabn.ReadyPage;
 
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key1   = key;
-                                        cabn.Buckets[page].Value1 = updateValue;
-                                        cabn.ReadyPage            = -1;
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = addValue;
+                                cabn.ReadyPage           = -1;
 
-                                        frame.Links[index] = new Link(cabn.Id, page);
-                                        
-                                        RemoveLink(data, link, cabn.Id);
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                        syncs[index] = sync;
+                                RemoveLink(data, link, cabn.Id);
 
-                                        return updateValue;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, buck.Key2))
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key2   = key;
-                                        cabn.Buckets[page].Value2 = updateValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-                                                                               
-                                        RemoveLink(data, link, cabn.Id);
-
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    // adding
-                                    if (cabn.Id == link.Id)
-                                    {
-                                        cabn.Buckets[link.Positon].Key0   = key;
-                                        cabn.Buckets[link.Positon].Value0 = addValue;
-                                    }
-                                    else
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key0   = key;
-                                        cabn.Buckets[page].Value0 = addValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-                                                                               
-                                        RemoveLink(data, link, cabn.Id);
-                                    }
-
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, buck.Key0))
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key0   = key;
-                                        cabn.Buckets[page].Value0 = updateValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        RemoveLink(data, link, cabn.Id);
-
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, buck.Key2))
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key2   = key;
-                                        cabn.Buckets[page].Value2 = updateValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        RemoveLink(data, link, cabn.Id);
-
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    // adding
-                                    if (cabn.Id == link.Id)
-                                    {
-                                        cabn.Buckets[link.Positon].Key1   = key;
-                                        cabn.Buckets[link.Positon].Value1 = addValue;
-                                    }
-                                    else
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key1   = key;
-                                        cabn.Buckets[page].Value1 = addValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        RemoveLink(data, link, cabn.Id);
-                                    }
-                                        
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, buck.Key0))
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key0   = key;
-                                        cabn.Buckets[page].Value0 = updateValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        RemoveLink(data, link, cabn.Id);
-
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, buck.Key1))
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key1   = key;
-                                        cabn.Buckets[page].Value1 = updateValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        RemoveLink(data, link, cabn.Id);
-
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    // adding
-                                    if (cabn.Id == link.Id)
-                                    {
-                                        cabn.Buckets[link.Positon].Key2   = key;
-                                        cabn.Buckets[link.Positon].Value2 = addValue;
-                                    }
-                                    else
-                                    {
-                                        var page = cabn.ReadyPage;
-
-                                        cabn.Buckets[page]        = buck;
-                                        cabn.Buckets[page].Key2   = key;
-                                        cabn.Buckets[page].Value2 = addValue;
-                                        cabn.ReadyPage            = -1;
-
-                                        frame.Links[index] = new Link(cabn.Id, page);
-
-                                        RemoveLink(data, link, cabn.Id);
-                                    }
-
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1587,91 +1066,26 @@ namespace MBur.Collections.LockFree_v2d
                             }
                         }
                     }
-                    // growing
                     else
                     {
-                        var link = frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                        // update cell 0
-                        if (comp.Equals(key, buck.Key0))
+                        // update mode
+                        if (comp.Equals(key, buck.Key))
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                            // try to get lock
+                            if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                             {
                                 try
                                 {
                                     var page = cabn.ReadyPage;
 
-                                    cabn.Buckets[page]        = buck;
-                                    cabn.Buckets[page].Key0   = key;
-                                    cabn.Buckets[page].Value0 = updateValue;
-                                    cabn.ReadyPage            = -1;
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = updateValue;
+                                    cabn.ReadyPage           = -1;
 
-                                    frame.Links[index] = new Link(cabn.Id, page);
-
-                                    RemoveLink(data, link, cabn.Id);
-
-                                    return updateValue;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        // update cell 1
-                        else if (comp.Equals(key, buck.Key1))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                try
-                                {
-                                    var page = cabn.ReadyPage;
-
-                                    cabn.Buckets[page]        = buck;
-                                    cabn.Buckets[page].Key1   = key;
-                                    cabn.Buckets[page].Value1 = updateValue;
-                                    cabn.ReadyPage            = -1;
-                                    
-                                    frame.Links[index] = new Link(cabn.Id, page);
-
-                                    RemoveLink(data, link, cabn.Id);
-
-                                    return updateValue;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        // update cell 2
-                        else if (comp.Equals(key, buck.Key2))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                try
-                                {
-                                    var page = cabn.ReadyPage;
-
-                                    cabn.Buckets[page]        = buck;
-                                    cabn.Buckets[page].Key2   = key;
-                                    cabn.Buckets[page].Value2 = updateValue;
-                                    cabn.ReadyPage            = -1;
-
-                                    frame.Links[index] = new Link(cabn.Id, page);
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+                                    //Volatile.Write(ref frame.Links[index].Int64View, ((long)page << 32) + cabn.Id);
 
                                     RemoveLink(data, link, cabn.Id);
 
@@ -1690,7 +1104,7 @@ namespace MBur.Collections.LockFree_v2d
                             }
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -1785,7 +1199,7 @@ namespace MBur.Collections.LockFree_v2d
         #region ' Private Area '
 
         // Expand table function
-        private void GrowTable(HashTableData data, int hash)
+        private void GrowTable(HashTableData data)
         {
             var len = data.Frame.HashMaster;
 
@@ -1839,27 +1253,17 @@ namespace MBur.Collections.LockFree_v2d
 
                     // set a bucket lock
                     if (
-                            sync <= (int)RecordStatus.Full
+                            sync <= (int)RecordStatus.HasValue
                                             &&
                             sync == Interlocked.CompareExchange(ref cur_frame.SyncTable[i], sync | (int)RecordStatus.Growing, sync)
                         )
                     {
-                        var link = cur_frame.Links[i];
+                        ref var link = ref cur_frame.Links[i];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                        if ((sync & (int)RecordStatus.HasValue0) != 0)
+                        if ((sync & (int)RecordStatus.HasValue) != 0)
                         {
-                            GrowingAdd(data, new_frame, cabinet, buck.Key0, buck.Value0);
-                        }
-
-                        if ((sync & (int)RecordStatus.HasValue1) != 0)
-                        {
-                            GrowingAdd(data, new_frame, cabinet, buck.Key1, buck.Value1);
-                        }
-
-                        if ((sync & (int)RecordStatus.HasValue2) != 0)
-                        {
-                            GrowingAdd(data, new_frame, cabinet, buck.Key2, buck.Value2);
+                            GrowingAdd(new_frame, cabinet, buck.Key, buck.Value);
                         }
 
                         RemoveLink(data, link, cabinet.Id);
@@ -1884,48 +1288,27 @@ namespace MBur.Collections.LockFree_v2d
         }
 
         // Add on growing
-        private void GrowingAdd(HashTableData data, HashTableDataFrame frame, Cabinet cabinet, TKey key, TValue value)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void GrowingAdd(HashTableDataFrame frame, Cabinet cabinet, TKey key, TValue value)
         {
             int page;
             var comp  = _keysComparer;
             int index = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
             int sync  = frame.SyncTable[index];
             
-            if (frame.Links[index].Id != cabinet.Id)
+            if ((sync & (int)RecordStatus.HasValue) == 0)
             {
                 PreparePage(cabinet);
 
                 page = cabinet.ReadyPage;
 
-                frame.Links[index] = new Link(cabinet.Id, page);
+                cabinet.Buckets[page].Key   = key;
+                cabinet.Buckets[page].Value = value;
+
+                frame.SyncTable[index] = sync | (int)RecordStatus.HasValue;
+                frame.Links[index]     = new Link { Id = cabinet.Id, Positon = page };
 
                 cabinet.ReadyPage = -1;
-            }
-            else
-            {
-                page = frame.Links[index].Positon;
-            }
-
-            if ((sync & (int)RecordStatus.HasValue0) == 0)
-            {
-                cabinet.Buckets[page].Key0   = key;
-                cabinet.Buckets[page].Value0 = value;
-
-                frame.SyncTable[index] = sync | (int)RecordStatus.HasValue0;
-            }
-            else if ((sync & (int)RecordStatus.HasValue1) == 0)
-            {
-                cabinet.Buckets[page].Key1   = key;
-                cabinet.Buckets[page].Value1 = value;
-
-                frame.SyncTable[index] = sync | (int)RecordStatus.HasValue1;
-            }
-            else
-            {
-                cabinet.Buckets[page].Key2   = key;
-                cabinet.Buckets[page].Value2 = value;
-
-                frame.SyncTable[index] = sync | (int)RecordStatus.HasValue2;
             }
         }
 
@@ -2118,9 +1501,9 @@ namespace MBur.Collections.LockFree_v2d
             if (cabinet.ReadyPage < 0)
             {
                 // return not used elememnt
-                if (cabinet.Position < cabinet.Buckets.Length)
+                if (cabinet.Positon < cabinet.Buckets.Length - WRITER_DELAY)
                 {
-                    cabinet.ReadyPage = cabinet.Position++;
+                    cabinet.ReadyPage = cabinet.Positon++;
 
                     return;
                 }
@@ -2130,41 +1513,85 @@ namespace MBur.Collections.LockFree_v2d
                 // return removed element
                 if (guest != null)
                 {
-                    if (cabinet.Buckets[guest.ReaderHead].Next > 0)
-                    {
-                        cabinet.ReadyPage = guest.ReaderHead;
+                    var seg = guest.Buffer.Reader;
 
-                        guest.ReaderHead = cabinet.Buckets[guest.ReaderHead].Next;
+                    if (seg.ReaderPosition != seg.WriterPosition)
+                    {
+                        cabinet.ReadyPage = seg.Messages[seg.ReaderPosition];
+
+                        if (seg.ReaderPosition < seg.Messages.Length - 1)
+                        {
+                            seg.ReaderPosition++;
+                        }
+                        else
+                        {
+                            seg.ReaderPosition = 0;
+                        }
 
                         return;
                     }
-
-                    var cur_guest = guest;
-
-                    while (true)
+                    else
                     {
-                        // swap to next guest
-                        cur_guest = cur_guest.Next;
+                        var cur_guest = guest;
 
-                        if (cur_guest == null)
+                        while (true)
                         {
-                            cur_guest = cabinet.GuestsList;
-                        }
+                            seg = cur_guest.Buffer.Reader;
+                            
+                            var cur_seg = seg;
 
-                        if (cur_guest == guest)
-                        {
-                            break;
-                        }
+                            while (true)
+                            {
+                                // validation reader position
+                                if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
+                                {
+                                    cabinet.ReadyPage = cur_seg.Messages[cur_seg.ReaderPosition];
 
-                        if (cabinet.Buckets[cur_guest.ReaderHead].Next > 0)
-                        {
-                            cabinet.ReadyPage = cur_guest.ReaderHead;
+                                    // set position to next element for reading
+                                    if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
+                                    {
+                                        cur_seg.ReaderPosition++;
+                                    }
+                                    else
+                                    {
+                                        cur_seg.ReaderPosition = 0;
+                                    }
 
-                            cur_guest.ReaderHead = cabinet.Buckets[cur_guest.ReaderHead].Next;
+                                    // save current guest
+                                    cabinet.Current = cur_guest;
 
-                            cabinet.Current = cur_guest;
+                                    // save current segment
+                                    cur_guest.Buffer.Reader = cur_seg;
 
-                            return;
+                                    return;
+                                }
+
+                                // swap to next segment
+                                cur_seg = cur_seg.Next;
+
+                                if (cur_seg == null)
+                                {
+                                    cur_seg = cur_guest.Buffer.Root;
+                                }
+
+                                if (cur_seg == seg)
+                                {
+                                    break;
+                                }
+                            }
+
+                            // swap to next guest
+                            cur_guest = cur_guest.Next;
+
+                            if (cur_guest == null)
+                            {
+                                cur_guest = cabinet.GuestsList;
+                            }
+
+                            if (cur_guest == guest)
+                            {
+                                break;
+                            }
                         }
                     }
                 }
@@ -2187,14 +1614,13 @@ namespace MBur.Collections.LockFree_v2d
                 Array.Copy(cabinet.Buckets, tmp, cabinet.Buckets.Length);
 
                 cabinet.Buckets   = tmp;
-                cabinet.ReadyPage = cabinet.Position++;
+                cabinet.ReadyPage = cabinet.Positon++;
 
                 return;
             }
         }
 
         // 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RemoveLink(HashTableData data, Link link, int guest_id)
         {
             if (link.Id == 0)
@@ -2233,7 +1659,7 @@ namespace MBur.Collections.LockFree_v2d
                     owner.Sync = 0;
                 }
             }
-            
+
             // setup new guest
             if (table[guest_id] == null)
             {
@@ -2260,12 +1686,11 @@ namespace MBur.Collections.LockFree_v2d
 
             guest = table[guest_id];
 
+            // write to delay buffer
             if (guest.WriterPosition == WRITER_DELAY)
             {
                 guest.WriterPosition = 0;
             }
-
-            owner.Buckets[link.Positon].Next = 0;
 
             if (guest.WriterBuffer[guest.WriterPosition] == 0)
             {
@@ -2278,25 +1703,86 @@ namespace MBur.Collections.LockFree_v2d
 
             guest.WriterBuffer[guest.WriterPosition++] = link.Positon;
 
-            if (guest.WriterTail == -1)
-            {
-                guest.WriterTail = pos;
-                guest.ReaderHead = pos;
+            var seg = guest.Buffer.Writer;
 
-                return;
+            // write message
+            if (seg.WriterPosition != seg.ReaderPosition - 1)
+            {
+                if (seg.WriterPosition == seg.Messages.Length - 1)
+                {
+                    if (seg.ReaderPosition > 0)
+                    {
+                        seg.Messages[seg.WriterPosition] = pos;
+                        seg.WriterPosition = 0;
+
+                        return;
+                    }
+                }
+                else
+                {
+                    seg.Messages[seg.WriterPosition++] = pos;
+
+                    return;
+                }
             }
 
-            // clear links
-            if (_isRefenceType)
+            var cur = seg.Next;
+            var last = guest.Buffer.Root;
+
+            // search for segment with free cells
+            while (true)
             {
-                owner.Buckets[guest.WriterTail] = new Bucket { Next = pos };
-            }
-            else
-            {
-                owner.Buckets[guest.WriterTail].Next = pos;
+                if (cur == null)
+                {
+                    cur = guest.Buffer.Root;
+                }
+
+                if (cur == seg)
+                {
+                    break;
+                }
+
+                if (cur.WriterPosition != cur.ReaderPosition - 1)
+                {
+                    if (cur.WriterPosition == cur.Messages.Length - 1)
+                    {
+                        if (cur.ReaderPosition > 0)
+                        {
+                            cur.Messages[cur.WriterPosition] = pos;
+                            cur.WriterPosition = 0;
+
+                            guest.Buffer.Writer = cur;
+
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        cur.Messages[cur.WriterPosition++] = pos;
+
+                        guest.Buffer.Writer = cur;
+
+                        return;
+                    }
+                }
+
+                if (cur.Next == null)
+                {
+                    last = cur;
+                }
+
+                cur = cur.Next;
             }
 
-            guest.WriterTail = pos;
+            // create new segment
+            var new_seg = new ConcurrentDictionaryCycleBufferSegment(last.Messages.Length * 2);
+
+            new_seg.WriterPosition = 1;
+            new_seg.Messages[0] = link.Positon;
+
+            last.Next = new_seg;
+
+            guest.Buffer.Writer = new_seg;
         }
 
         #endregion
@@ -2918,14 +2404,11 @@ namespace MBur.Collections.LockFree_v2d
         private enum RecordStatus
         {
             Empty     = 00,
-            HasValue0 = 01,
-            HasValue1 = 02,
-            HasValue2 = 04,
-            Full      = 07,
-            Adding    = 08,
-            Removing  = 16,
-            Updating  = 32,
-            Growing   = 64
+            HasValue  = 01,
+            Adding    = 02,
+            Removing  = 04,
+            Updating  = 08,
+            Growing   = 16
         }
 
         /// <summary>
@@ -3001,8 +2484,9 @@ namespace MBur.Collections.LockFree_v2d
             {
                 Id          = id;
                 ReadyPage   = -1;
-                Position    = 1;
+                Positon     = 0;
                 GuestsTable = new Guest[0];
+                //Buckets     = new Bucket[16];
                 Buckets     = new Bucket[WRITER_DELAY * 4];
            }
 
@@ -3019,7 +2503,7 @@ namespace MBur.Collections.LockFree_v2d
             // for synchronization threads during initialization
             public int Sync;
             // current position in Buckets array
-            public int Position;
+            public int Positon;
             // Array of buckets
             public Bucket[] Buckets;
         }
@@ -3029,10 +2513,9 @@ namespace MBur.Collections.LockFree_v2d
         {
             public Guest(int id)
             {
-                Id          = id;
-                Next        = null;
-                ReaderHead  = 0;
-                WriterTail  = -1;
+                Id     = id;
+                Next   = null;
+                Buffer = new ConcurrentDictionaryCycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
                 WriterBuffer = new int[WRITER_DELAY];
             }
 
@@ -3040,10 +2523,8 @@ namespace MBur.Collections.LockFree_v2d
             public int Id;
             // next guest
             public Guest Next;
-            // Linked list for reading
-            public int ReaderHead;
-            // Linked list for removed elements
-            public int WriterTail;
+            // cycle buffer
+            public ConcurrentDictionaryCycleBuffer Buffer;
             //
             public int WriterPosition;
             // 
@@ -3051,29 +2532,11 @@ namespace MBur.Collections.LockFree_v2d
         }
 
         //
-        [DebuggerDisplay("Next = {Next}, {Key0}/{Value0}, {Key1}/{Value1}, {Key2}/{Value2}")]
+        [DebuggerDisplay("{Key0}/{Value0}, {Key1}/{Value1}, {Key2}/{Value2}")]
         private struct Bucket
         {
-            public TKey     Key0;
-            public TKey     Key1;
-            public TKey     Key2;
-            public TValue   Value0;
-            public TValue   Value1;
-            public TValue   Value2;
-            public int      Next;
-        }
-
-        internal struct Link
-        {
-            public Link(int id, int position)
-            {
-                Id = id;
-                Positon = position;
-            }
-
-            public int Id;
-            // entry index
-            public int Positon;
+            public TKey     Key;
+            public TValue   Value;
         }
 
         /// <summary>
@@ -3251,7 +2714,6 @@ namespace MBur.Collections.LockFree_v2d
             }
         }
 
-
         #endregion
 
         #region ' Helpers '
@@ -3338,33 +2800,45 @@ namespace MBur.Collections.LockFree_v2d
     }
 
     // 
-    [StructLayout(LayoutKind.Explicit, Size = 8)]
-    internal struct Link2
+    //[StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE * 4)]
+    internal class ConcurrentDictionaryCycleBuffer
     {
-        public Link2(long view)
+        public ConcurrentDictionaryCycleBuffer(int capacity)
         {
-            Id        = 0;
-            Positon   = 0;
-            Int64View = view;
+            Root = new ConcurrentDictionaryCycleBufferSegment(capacity);
+            Reader = Root;
+            Writer = Root;
         }
 
-        public Link2(int id, int position)
-        {
-            Int64View = 0;
-            Id        = id;
-            Positon   = position;
-        }
-
-        [FieldOffset(0)]
-        public long Int64View;
-        // owner id
-        [FieldOffset(0)]
-        public int Id;
-        // entry index
-        [FieldOffset(4)]
-        public int Positon;
+        // the first segment
+        public ConcurrentDictionaryCycleBufferSegment Root;
+        // current reader segment
+        public ConcurrentDictionaryCycleBufferSegment Reader;
+        // current writer segment
+        public ConcurrentDictionaryCycleBufferSegment Writer;
     }
 
+    // 
+    //[StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE * 4)]
+    internal class ConcurrentDictionaryCycleBufferSegment
+    {
+        public ConcurrentDictionaryCycleBufferSegment(int capacity)
+        {
+            Messages = new int[capacity];
+        }
+
+        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 1)]
+        public int ReaderPosition;
+
+        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 2)]
+        public int WriterPosition;
+
+        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 3)]
+        public int[] Messages;
+
+        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 4)]
+        public ConcurrentDictionaryCycleBufferSegment Next;
+    }
 
     /// <summary>
     ///     A size greater than or equal to the size of the most common CPU cache lines.
@@ -3403,5 +2877,18 @@ namespace MBur.Collections.LockFree_v2d
             }
         }
     }
+
+    // 
+    [StructLayout(LayoutKind.Explicit, Size = 8)]
+    internal struct Link
+    {
+        // owner id
+        [FieldOffset(0)]
+        public int Id;
+        // entry index
+        [FieldOffset(4)]
+        public int Positon;
+        [FieldOffset(0)]
+        public long Int64View;
+    }
 }
-//Volatile.Write(ref frame.Links[index].Int64View, new Link(cabn.Id, page).Int64View);

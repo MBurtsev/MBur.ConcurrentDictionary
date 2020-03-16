@@ -12,4 +12,14 @@
     <DefineConstants>TRACE;CDS_COMPILE_JUST_THIS</DefineConstants>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="LockFree\ConcurrentDictionary_v2e.cs" />
+    <Compile Remove="LockFree\ConcurrentDictionary_v2e1.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="LockFree\ConcurrentDictionary_v2e.cs" />
+    <None Include="LockFree\ConcurrentDictionary_v2e1.cs" />
+  </ItemGroup>
+
 </Project>

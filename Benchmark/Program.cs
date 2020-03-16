@@ -25,13 +25,13 @@ namespace Benchmark
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
             // LockFreeDictionary
-            //BenchmarkRunner.Run<LockFreeDictionaryBench>();
+            BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
             // Wat-Free Count
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
             //BenchmarkRunner.Run<CountBench>();
 
-            TryGetTest();
+            //TryGetTest();
             //Debug();
 
             Console.WriteLine("Complate");
@@ -57,10 +57,36 @@ namespace Benchmark
             var writes  = 4;
             var cd = new ConcurrentDictionary<int, KeyValuePair<long, long>>();
 
+            for (var threads = 0; threads < readers; ++threads)
+            {
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        while (true)
+                        {
+                            if (cd.TryGetValue(0, out KeyValuePair<long, long> item))
+                            {
+                                if (item.Key != item.Value)
+                                {
+                                    Console.WriteLine($"WRITER_DELAY must be increased {item.Key - item.Value}");
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+                    }
+                });
+            }
+
             for (var threads = 0; threads < writes; ++threads)
             {
                 Task.Run(() =>
                 {
+                    Console.WriteLine($"Writer {Thread.CurrentThread.ManagedThreadId} begin");
+
                     try
                     {
                         for (long i = 0; ; i++)
@@ -73,29 +99,8 @@ namespace Benchmark
                         Console.WriteLine(e);
                     }
                 });
-            }
 
-            for (var threads = 0; threads < readers; ++threads)
-            {
-                Task.Run(() =>
-                {
-                    try
-                    { 
-                        while (true)
-                        {
-                            cd.TryGetValue(0, out KeyValuePair<long, long> item);
-
-                            if (item.Key != item.Value)
-                            {
-                                Console.WriteLine($"WRITER_DELAY must be increased {item.Key} != {item.Value}");
-                            }
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e);
-                    }
-                });
+                Thread.Sleep(5_000);
             }
         }
     }
