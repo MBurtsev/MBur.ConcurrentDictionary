@@ -45,7 +45,7 @@ namespace Benchmark.Helpers
             Add(MarkdownExporter.GitHub);
             Add(PlainExporter.Default);
 
-            Add(JitOptimizationsValidator.DontFailOnError);
+            Add(JitOptimizationsValidator.FailOnError);
         }
     }
 }

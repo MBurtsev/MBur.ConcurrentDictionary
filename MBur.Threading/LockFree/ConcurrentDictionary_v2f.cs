@@ -409,14 +409,13 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
             unchecked
             {
-                var data  = _data;
-                var comp  = _keysComparer;
-                var frame = data.Frame;
-                var hash  = comp.GetHashCode(key) & 0x7fffffff;
-                var index = hash % frame.HashMaster;
-                var sync  = frame.SyncTable[index];
-                var link  = frame.Links[index];
-                var buck  = data.Cabinets[link.Id].Buckets[link.Positon];
+                var data      = _data;
+                var comp      = _keysComparer;
+                var frame     = data.Frame;
+                var index     = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
+                var sync      = frame.SyncTable[index];
+                ref var link  = ref frame.Links[index];
+                ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                 if (
                         (sync & (int)RecordStatus.HasValue) != 0
@@ -2211,6 +2210,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
         }
 
         // 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RemoveLink(HashTableData data, Link link, int guest_id)
         {
             if (link.Id == 0)
@@ -2277,21 +2277,21 @@ namespace MBur.Collections.LockFree/*_v2f*/
             guest = table[guest_id];
 
             // write to delay buffer
-            if (guest.WriterPosition == WRITER_DELAY)
+            if (guest.DelayPosition == WRITER_DELAY)
             {
-                guest.WriterPosition = 0;
+                guest.DelayPosition = 0;
             }
 
-            if (guest.WriterBuffer[guest.WriterPosition] == 0)
+            if (guest.DelayBuffer[guest.DelayPosition] == 0)
             {
-                guest.WriterBuffer[guest.WriterPosition++] = link.Positon;
+                guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
 
                 return;
             }
 
-            var pos = guest.WriterBuffer[guest.WriterPosition];
+            var pos = guest.DelayBuffer[guest.DelayPosition];
 
-            guest.WriterBuffer[guest.WriterPosition++] = link.Positon;
+            guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
 
             var seg = guest.Buffer.Writer;
 
@@ -3060,7 +3060,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
             public readonly int HashMaster;
 
             // State array. Used to synchronize threads. See RecordStatus
-            // Other threads make changes only when deleting or updating.
             public readonly int[] SyncTable;
 
             // 
@@ -3106,7 +3105,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 Id     = id;
                 Next   = null;
                 Buffer = new ConcurrentDictionaryCycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
-                WriterBuffer = new int[WRITER_DELAY];
+                DelayBuffer = new int[WRITER_DELAY];
             }
 
             // guest id
@@ -3116,9 +3115,9 @@ namespace MBur.Collections.LockFree/*_v2f*/
             // cycle buffer
             public ConcurrentDictionaryCycleBuffer Buffer;
             //
-            public int WriterPosition;
+            public int DelayPosition;
             // 
-            public int[] WriterBuffer;
+            public int[] DelayBuffer;
         }
 
         //
@@ -3138,8 +3137,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
             private readonly ConcurrentDictionary<TKey, TValue> _dictionary;
             // bucket index
             private int _index;
-            // current cell in bucket
-            private int _cell;
 
             // constructor
             public Enumerator(ConcurrentDictionary<TKey, TValue> dictionary)
@@ -3152,79 +3149,50 @@ namespace MBur.Collections.LockFree/*_v2f*/
             // get next value
             public bool MoveNext()
             {
-                return false;
-
                 while (true)
                 {
-                    //var data = Volatile.Read(ref _dictionary._data).Frame;
+                    var data  = Volatile.Read(ref _dictionary._data);
+                    var frame = data.Frame;
 
-                    //if (_index >= data.HashMaster)
-                    //{
-                    //    return false;
-                    //}
+                    if (_index >= frame.HashMaster)
+                    {
+                        return false;
+                    }
 
-                    //var vals = data.ValuesTable[_index];
-                    //var keys = data.KeysTable[_index];
-                    //var sync = data.SyncTable[_index];
+                    var sync = frame.SyncTable[_index];
 
-                    //// skip if empty
-                    //if (sync == (int)RecordStatus.Empty)
-                    //{
-                    //    _index++;
+                    // skip if empty
+                    if (sync == (int)RecordStatus.Empty)
+                    {
+                        _index++;
 
-                    //    continue;
-                    //}
+                        continue;
+                    }
 
-                    //// wait if another thread doing something
-                    //if (sync > (int)RecordStatus.Full && sync < (int)RecordStatus.Growing)
-                    //{
-                    //    continue;
-                    //}
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        continue;
+                    }
 
-                    //// check cell 0
-                    //if (_cell < 1 && (sync & (int)RecordStatus.HasValue0) != 0)
-                    //{
-                    //    _cell = 1;
-                    //    Current = new KeyValuePair<TKey, TValue>(keys.Key0, vals.Value0);
+                    ref var link  = ref frame.Links[_index];
+                    ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                    //    return true;
-                    //}
+                    // check cell 0
+                    if ((sync & (int)RecordStatus.HasValue) != 0)
+                    {
+                        Current = new KeyValuePair<TKey, TValue>(buck.Key, buck.Value);
 
-                    //// check cell 1
-                    //if (_cell < 2 && (sync & (int)RecordStatus.HasValue1) != 0)
-                    //{
-                    //    _cell = 2;
-                    //    Current = new KeyValuePair<TKey, TValue>(keys.Key1, vals.Value1);
+                        return true;
+                    }
 
-                    //    return true;
-                    //}
-
-                    //// check cell 2
-                    //if (_cell < 3 && (sync & (int)RecordStatus.HasValue2) != 0)
-                    //{
-                    //    _cell = 3;
-                    //    Current = new KeyValuePair<TKey, TValue>(keys.Key2, vals.Value2);
-
-                    //    return true;
-                    //}
-
-                    //_cell = 0;
-                    //_index++;
-
-                    //// check cell 3
-                    //if ((sync & (int)RecordStatus.HasValue3) != 0)
-                    //{
-                    //    Current = new KeyValuePair<TKey, TValue>(keys.Key3, vals.Value3);
-
-                    //    return true;
-                    //}
+                    _index++;
                 }
             }
 
             // reset for reuse
             public void Reset()
             {
-                _cell = 0;
                 _index = 0;
                 Current = default;
             }
