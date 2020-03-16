@@ -456,6 +456,11 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 ThrowKeyNullException();
             }
 
+            // Each change occurs in a new area of memory. The operability of this 
+            // function is provided by the time-lag effect. When a thread loses a 
+            // time quantum when switching tasks, its expectation of a new quantum 
+            // is much less than the time when a page can be reused for recording.
+
             unchecked
             {
                 var data      = _data;
@@ -466,7 +471,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 ref var link  = ref frame.Links[index];
                 ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                // check cell 0
+                // check exist
                 if (
                         (sync & (int)RecordStatus.HasValue) != 0
                                     &&
@@ -510,16 +515,16 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 ThrowKeyNullException();
             }
 
-            var data  = _data;
-            var frame = data.Frame;
-            var comp  = _keysComparer;
-            var hash  = comp.GetHashCode(key) & 0x7fffffff;
-            var cabn  = GetCabinet(data);
-            
-            PreparePage(cabn);
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
                 // search empty space
                 while (true)
                 {
@@ -546,9 +551,9 @@ namespace MBur.Collections.LockFree/*_v2f*/
                             {
                                 var page = cabn.ReadyPage;
 
-                                cabn.Buckets[page].Key = key;
+                                cabn.Buckets[page].Key   = key;
                                 cabn.Buckets[page].Value = value;
-                                cabn.ReadyPage = -1;
+                                cabn.ReadyPage           = -1;
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
@@ -560,9 +565,11 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 return true;
                             }
-                            finally
+                            catch
                             {
                                 syncs[index] = sync;
+
+                                throw;
                             }
                         }
                     }
@@ -610,7 +617,66 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 throw new ArgumentNullException(nameof(item), SR.ConcurrentDictionary_ItemKeyIsNull);
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // return if empty
+                    if (sync == (int)RecordStatus.Empty)
+                    {
+                        return false;
+                    }
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                    // check
+                    if (!comp.Equals(key, buck.Key) || !_valuesComparer.Equals(val, buck.Value))
+                    {
+                        return false;
+                    }
+
+                    // try to get lock
+                    if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Removing, sync) == sync)
+                    {
+                        try
+                        {
+                            RemoveLink(data, link, GetCabinet(data).Id);
+
+                            syncs[index] = sync ^ (int)RecordStatus.HasValue;
+
+                            DecrementCount(data);
+
+                            return true;
+                        }
+                        catch
+                        {
+                            syncs[index] = sync;
+
+                            throw;
+                        }
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
@@ -755,7 +821,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     ref var link = ref frame.Links[index];
                     ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                    // check cell 0
+                    // check exist
                     if (
                             (sync & (int)RecordStatus.HasValue) == 0 
                                             || 
@@ -812,7 +878,81 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 ThrowKeyNullException();
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                // search empty space
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
+                    {
+                        // try to get lock
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
+                        {
+                            try
+                            {
+                                var page = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                RemoveLink(data, link, cabn.Id);
+
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
+
+                                IncrementCount(data);
+
+                                return value;
+                            }
+                            catch
+                            {
+                                syncs[index] = sync;
+
+                                throw;
+                            }
+                        }
+                    }
+                    // growing
+                    else
+                    {
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                        // check exist
+                        if (comp.Equals(key, buck.Key))
+                        {
+                            return buck.Value;
+                        }
+
+                        GrowTable(data);
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
@@ -842,7 +982,82 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 throw new ArgumentNullException(nameof(valueFactory));
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                // search empty space
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
+                    {
+                        // try to get lock
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
+                        {
+                            try
+                            {
+                                var value = valueFactory(key);
+                                var page  = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                RemoveLink(data, link, cabn.Id);
+
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
+
+                                IncrementCount(data);
+
+                                return value;
+                            }
+                            catch
+                            {
+                                syncs[index] = sync;
+
+                                throw;
+                            }
+                        }
+                    }
+                    // growing
+                    else
+                    {
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                        // check exist
+                        if (comp.Equals(key, buck.Key))
+                        {
+                            return buck.Value;
+                        }
+
+                        GrowTable(data);
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
@@ -873,7 +1088,82 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 throw new ArgumentNullException(nameof(valueFactory));
             }
 
-            throw new Exception();
+            unchecked
+            {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
+
+                // search empty space
+                while (true)
+                {
+                    var syncs = frame.SyncTable;
+                    var index = hash % frame.HashMaster;
+                    var sync  = syncs[index];
+
+                    // wait if another thread doing something
+                    if (sync > (int)RecordStatus.HasValue)
+                    {
+                        frame = Volatile.Read(ref data.Frame);
+
+                        continue;
+                    }
+
+                    ref var link = ref frame.Links[index];
+
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
+                    {
+                        // try to get lock
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
+                        {
+                            try
+                            {
+                                var value = valueFactory(key, factoryArgument);
+                                var page  = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                RemoveLink(data, link, cabn.Id);
+
+                                syncs[index] = sync | (int)RecordStatus.HasValue;
+
+                                IncrementCount(data);
+
+                                return value;
+                            }
+                            catch
+                            {
+                                syncs[index] = sync;
+
+                                throw;
+                            }
+                        }
+                    }
+                    // growing
+                    else
+                    {
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                        // check exist
+                        if (comp.Equals(key, buck.Key))
+                        {
+                            return buck.Value;
+                        }
+
+                        GrowTable(data);
+                    }
+
+                    frame = Volatile.Read(ref data.Frame);
+                }
+            }
         }
 
         /// <summary>
