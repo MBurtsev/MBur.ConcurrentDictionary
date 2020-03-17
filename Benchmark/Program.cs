@@ -117,6 +117,7 @@ namespace Benchmark
             Console.WriteLine($"Memory usage for {dictionary.GetType().FullName}");
 
             MemoryUsage(dictionary, 1);
+            MemoryUsage(dictionary, 256);
             MemoryUsage(dictionary, 1000);
             MemoryUsage(dictionary, 1000_000);
             MemoryUsage(dictionary, 10_000_000);
