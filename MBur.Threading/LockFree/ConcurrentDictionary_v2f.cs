@@ -2316,7 +2316,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 }
             }
 
-            var cur = seg.Next;
+            var cur  = seg.Next;
             var last = guest.Buffer.Root;
 
             // search for segment with free cells
@@ -2373,6 +2373,28 @@ namespace MBur.Collections.LockFree/*_v2f*/
             last.Next = new_seg;
 
             guest.Buffer.Writer = new_seg;
+
+            // Remove readed segments
+            // It makes no reason to keep smaller segments. This reduces the
+            // number of iterations for the read thread.
+            ref var node = ref guest.Buffer.Root;
+
+            while (node != null)
+            {
+                if (node == guest.Buffer.Root && node.Next == null)
+                {
+                    break;
+                }
+
+                if (node.ReaderPosition == node.WriterPosition)
+                {
+                    node = node.Next;
+                }
+                else
+                {
+                    node = ref node.Next;
+                }
+            }
         }
 
         #endregion
@@ -3121,7 +3143,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
         }
 
         //
-        [DebuggerDisplay("{Key0}/{Value0}")]
+        [DebuggerDisplay("{Key}/{Value}")]
         private struct Bucket
         {
             public TKey     Key;
