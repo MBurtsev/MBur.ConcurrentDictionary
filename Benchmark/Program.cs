@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,7 +26,7 @@ namespace Benchmark
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
             // LockFreeDictionary
-            BenchmarkRunner.Run<LockFreeDictionaryBench>();
+            //BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
             // Wat-Free Count
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
@@ -33,6 +34,7 @@ namespace Benchmark
 
             //TryGetTest();
             //Debug();
+            MemoryUsage();
 
             Console.WriteLine("Complate");
             Console.ReadLine();
@@ -102,6 +104,43 @@ namespace Benchmark
 
                 Thread.Sleep(5_000);
             }
+        }
+
+        static void MemoryUsage()
+        {
+            MemoryUsage(new MBur.Collections.LockFree.ConcurrentDictionary<int, int>());
+            MemoryUsage(new System.Collections.Concurrent.ConcurrentDictionary<int, int>());
+        }
+
+        static void MemoryUsage(IDictionary dictionary)
+        {
+            Console.WriteLine($"Memory usage for {dictionary.GetType().FullName}");
+
+            MemoryUsage(dictionary, 1);
+            MemoryUsage(dictionary, 1000);
+            MemoryUsage(dictionary, 1000_000);
+            MemoryUsage(dictionary, 10_000_000);
+
+            Console.WriteLine();
+        }
+
+        static void MemoryUsage(IDictionary dictionary, int count)
+        {
+            dictionary.Clear();
+
+            var size = GC.GetTotalMemory(true);
+
+            for (var i = 0; i < count; ++i)
+            {
+                dictionary[i] = i;
+            }
+
+            var mem = GC.GetTotalMemory(true) - size;
+
+            Console.WriteLine();
+            Console.WriteLine($"Elements count: {count:### ### ### ###}");
+            Console.WriteLine($"Memory alocated: {mem:### ### ### ###}");
+            Console.WriteLine($"Size cost per item: {Math.Truncate((double)mem / count)}");
         }
     }
 }

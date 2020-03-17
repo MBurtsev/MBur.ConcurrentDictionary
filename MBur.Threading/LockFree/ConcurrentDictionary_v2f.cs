@@ -1624,7 +1624,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                     ref var link = ref frame.Links[index];
 
-                    // addiing mode
+                    // adding mode
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
                         if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
@@ -2204,8 +2204,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                 cabinet.Buckets   = tmp;
                 cabinet.ReadyPage = cabinet.Positon++;
-
-                return;
             }
         }
 
@@ -3103,7 +3101,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
             // owner id
             public int Id;
-            // Prepared page for a new entry
+            // Prepared page for a new record
             public int ReadyPage;
             // linked list of guests (convenient for the owner)
             public Guest GuestsList;
