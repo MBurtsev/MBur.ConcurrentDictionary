@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree/*_v2f*/
+namespace MBur.Collections.LockFree/*_v2g*/
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -42,7 +42,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
         // The size for first segments
         private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
         // The number of operations through which the page will be allowed to be used again.
-        private const int WRITER_DELAY = 4096;
+        private const int WRITER_DELAY = 4096;//256
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
@@ -412,8 +412,17 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 var data      = _data;
                 var comp      = _keysComparer;
                 var frame     = data.Frame;
-                var index     = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
+                var hash      = comp.GetHashCode(key) & 0x7fffffff;
+                var index     = hash % frame.HashMaster;
                 var sync      = frame.SyncTable[index];
+
+                if ((sync & (int)RecordStatus.Grown) != 0)
+                {
+                    frame = Volatile.Read(ref data.GrowingFrame);
+                    index = hash % frame.HashMaster;
+                    sync  = frame.SyncTable[index];
+                }
+
                 ref var link  = ref frame.Links[index];
                 ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
@@ -457,11 +466,20 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
             unchecked
             {
-                var data      = _data;
-                var comp      = _keysComparer;
-                var frame     = data.Frame;
-                var index     = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
-                var sync      = frame.SyncTable[index];
+                var data  = _data;
+                var comp  = _keysComparer;
+                var frame = data.Frame;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var index = hash % frame.HashMaster;
+                var sync  = frame.SyncTable[index];
+
+                if ((sync & (int)RecordStatus.Grown) != 0)
+                {
+                    frame = Volatile.Read(ref data.GrowingFrame);
+                    index = hash % frame.HashMaster;
+                    sync  = frame.SyncTable[index];
+                }
+
                 ref var link  = ref frame.Links[index];
                 ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
@@ -526,6 +544,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -533,8 +559,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -551,9 +575,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -570,6 +592,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        ref var link = ref frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -624,6 +647,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
                     {
@@ -654,7 +685,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                         {
                             RemoveLink(data, link, GetCabinet(data).Id);
 
-                            syncs[index] = sync ^ (int)RecordStatus.HasValue;
+                            syncs[index] = (int)RecordStatus.Empty;
 
                             DecrementCount(data);
 
@@ -705,6 +736,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
                     {
@@ -741,7 +780,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                             RemoveLink(data, link, GetCabinet(data).Id);
 
-                            syncs[index] = sync ^ (int)RecordStatus.HasValue;
+                            syncs[index] = (int)RecordStatus.Empty;
 
                             DecrementCount(data);
 
@@ -797,11 +836,13 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
-
-                    // return if empty
-                    if (sync == (int)RecordStatus.Empty)
+                    
+                    if ((sync & (int)RecordStatus.Grown) != 0)
                     {
-                        return false;
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -812,7 +853,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                         continue;
                     }
 
-                    ref var link = ref frame.Links[index];
+                    var link = frame.Links[index];
                     ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                     // check exist
@@ -889,6 +930,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -896,8 +945,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -914,9 +961,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -933,6 +978,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        ref var link = ref frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -993,6 +1039,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -1000,8 +1054,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -1019,9 +1071,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1038,6 +1088,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        ref var link = ref frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -1099,6 +1150,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -1106,8 +1165,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -1125,9 +1182,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1144,6 +1199,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        ref var link = ref frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -1214,6 +1270,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -1221,8 +1285,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -1240,9 +1302,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1259,6 +1319,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        var link = frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -1355,6 +1416,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -1362,8 +1431,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -1381,9 +1448,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1400,6 +1465,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        var link = frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -1489,6 +1555,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -1496,8 +1570,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
@@ -1514,9 +1586,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1533,6 +1603,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     // growing
                     else
                     {
+                        var link = frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
@@ -1614,6 +1685,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     var index = hash % frame.HashMaster;
                     var sync  = syncs[index];
 
+                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    {
+                        frame = Volatile.Read(ref data.GrowingFrame);
+                        syncs = frame.SyncTable;
+                        index = hash % frame.HashMaster;
+                        sync  = syncs[index];
+                    }
+
                     // wait if another thread doing something
                     if (sync > (int)RecordStatus.HasValue)
                     {
@@ -1621,8 +1700,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         continue;
                     }
-
-                    ref var link = ref frame.Links[index];
 
                     // adding mode
                     if ((sync & (int)RecordStatus.HasValue) == 0)
@@ -1639,9 +1716,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
-                                RemoveLink(data, link, cabn.Id);
-
-                                syncs[index] = sync | (int)RecordStatus.HasValue;
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1657,6 +1732,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     }
                     else
                     {
+                        var link = frame.Links[index];
                         ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // update mode
@@ -1790,34 +1866,25 @@ namespace MBur.Collections.LockFree/*_v2f*/
         // Expand table function
         private void GrowTable(HashTableData data)
         {
-            var len = data.Frame.HashMaster;
+            if (data.SyncGrowing > 0)
+            {
+                return;
+            }
 
             // get growing lock
-            while (Interlocked.CompareExchange(ref data.SyncGrowing, 1, 0) != 0)
+            if (Interlocked.CompareExchange(ref data.SyncGrowing, 1, 0) != 0)
             {
-                while (Volatile.Read(ref data.SyncGrowing) != 0)
-                {
-                    Thread.Yield();
-                }
-
-                if (len != Volatile.Read(ref data.Frame).HashMaster)
-                {
-                    return;
-                }
+                return;
             }
 
             unchecked
             {
-                int sync;
-                // This assignment is necessary to calm the compiler.
-                // In fact, this variable is initialized anyway.
-                // HashTableData new_data;
-                var new_frame   = new HashTableDataFrame(0);
                 var cur_frame   = data.Frame;
                 var mul         = GROW_MULTIPLIER;
                 var new_master  = cur_frame.HashMaster;
                 var cabinet     = GetCabinet(data);
-                
+                var comp        = _keysComparer;
+
                 if (new_master == int.MaxValue)
                 {
                     data.SyncGrowing = 0;
@@ -1834,35 +1901,49 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                 new_master = (int)size;
 
-                new_frame = new HashTableDataFrame(new_master);
+                var new_frame = new HashTableDataFrame(new_master);
+
+                Volatile.Write(ref data.GrowingFrame, new_frame);
 
                 for (var i = 0; i < cur_frame.HashMaster; ++i)
                 {
-                    sync = Volatile.Read(ref cur_frame.SyncTable[i]);
+                    var sync = Volatile.Read(ref cur_frame.SyncTable[i]);
 
                     // set a bucket lock
                     if (
                             sync <= (int)RecordStatus.HasValue
                                             &&
-                            sync == Interlocked.CompareExchange(ref cur_frame.SyncTable[i], sync | (int)RecordStatus.Growing, sync)
-                        )
+                            Interlocked.CompareExchange(ref cur_frame.SyncTable[i], sync | (int)RecordStatus.Growing, sync) == sync
+                       )
                     {
-                        ref var link = ref cur_frame.Links[i];
-                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
-
                         if ((sync & (int)RecordStatus.HasValue) != 0)
                         {
-                            GrowingAdd(new_frame, cabinet, buck.Key, buck.Value);
+                            ref var link = ref cur_frame.Links[i];
+                            ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                            PreparePage(cabinet);
+
+                            var page = cabinet.ReadyPage;
+
+                            cabinet.Buckets[page].Key   = buck.Key;
+                            cabinet.Buckets[page].Value = buck.Value;
+
+                            var index = (comp.GetHashCode(buck.Key) & 0x7fffffff) % new_frame.HashMaster;
+
+                            new_frame.SyncTable[index] = (int)RecordStatus.HasValue;
+                            new_frame.Links[index]     = new Link { Id = cabinet.Id, Positon = page };
+
+                            cabinet.ReadyPage = -1;
+
+                            RemoveLink(data, link, cabinet.Id);
                         }
 
-                        RemoveLink(data, link, cabinet.Id);
+                        cur_frame.SyncTable[i] = (int)RecordStatus.Grown;
                     }
                     // wait another thread complate oparation
                     else
                     {
-                        i--;
-
-                        Thread.Yield();
+                        i--; 
                     }
                 }
 
@@ -1873,31 +1954,6 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 data.SyncGrowing = 0;
 
                 PreparePage(cabinet);
-            }
-        }
-
-        // Add on growing
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void GrowingAdd(HashTableDataFrame frame, Cabinet cabinet, TKey key, TValue value)
-        {
-            int page;
-            var comp  = _keysComparer;
-            int index = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
-            int sync  = frame.SyncTable[index];
-            
-            if ((sync & (int)RecordStatus.HasValue) == 0)
-            {
-                PreparePage(cabinet);
-
-                page = cabinet.ReadyPage;
-
-                cabinet.Buckets[page].Key   = key;
-                cabinet.Buckets[page].Value = value;
-
-                frame.SyncTable[index] = sync | (int)RecordStatus.HasValue;
-                frame.Links[index]     = new Link { Id = cabinet.Id, Positon = page };
-
-                cabinet.ReadyPage = -1;
             }
         }
 
@@ -2071,7 +2127,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
             // fill with empty Cabinets
             for (var i = data.Cabinets.Length; i < tmp_Cabinets.Length; ++i)
             {
-                tmp_Cabinets[i] = new Cabinet(0);
+                tmp_Cabinets[i] = new Cabinet(i);
             }
 
             // write new Cabinets link
@@ -2096,13 +2152,13 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                     return;
                 }
-                                
+
                 var guest = cabinet.Current ?? cabinet.GuestsList;
 
                 // return removed element
                 if (guest != null)
                 {
-                    var seg = guest.Buffer.Reader;
+                    var seg = guest.MessageBuffer.Reader;
 
                     if (seg.ReaderPosition != seg.WriterPosition)
                     {
@@ -2125,8 +2181,8 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                         while (true)
                         {
-                            seg = cur_guest.Buffer.Reader;
-                            
+                            seg = cur_guest.MessageBuffer.Reader;
+
                             var cur_seg = seg;
 
                             while (true)
@@ -2150,7 +2206,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                                     cabinet.Current = cur_guest;
 
                                     // save current segment
-                                    cur_guest.Buffer.Reader = cur_seg;
+                                    cur_guest.MessageBuffer.Reader = cur_seg;
 
                                     return;
                                 }
@@ -2160,7 +2216,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
                                 if (cur_seg == null)
                                 {
-                                    cur_seg = cur_guest.Buffer.Root;
+                                    cur_seg = cur_guest.MessageBuffer.Root;
                                 }
 
                                 if (cur_seg == seg)
@@ -2278,9 +2334,10 @@ namespace MBur.Collections.LockFree/*_v2f*/
             if (guest.DelayPosition == WRITER_DELAY)
             {
                 guest.DelayPosition = 0;
+                guest.DelayBufferReady = true;
             }
 
-            if (guest.DelayBuffer[guest.DelayPosition] == 0)
+            if (!guest.DelayBufferReady)
             {
                 guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
 
@@ -2291,7 +2348,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
 
             guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
 
-            var seg = guest.Buffer.Writer;
+            var seg = guest.MessageBuffer.Writer;
 
             // write message
             if (seg.WriterPosition != seg.ReaderPosition - 1)
@@ -2315,14 +2372,14 @@ namespace MBur.Collections.LockFree/*_v2f*/
             }
 
             var cur  = seg.Next;
-            var last = guest.Buffer.Root;
+            var last = guest.MessageBuffer.Root;
 
             // search for segment with free cells
             while (true)
             {
                 if (cur == null)
                 {
-                    cur = guest.Buffer.Root;
+                    cur = guest.MessageBuffer.Root;
                 }
 
                 if (cur == seg)
@@ -2339,7 +2396,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                             cur.Messages[cur.WriterPosition] = pos;
                             cur.WriterPosition = 0;
 
-                            guest.Buffer.Writer = cur;
+                            guest.MessageBuffer.Writer = cur;
 
                             return;
                         }
@@ -2348,7 +2405,7 @@ namespace MBur.Collections.LockFree/*_v2f*/
                     {
                         cur.Messages[cur.WriterPosition++] = pos;
 
-                        guest.Buffer.Writer = cur;
+                        guest.MessageBuffer.Writer = cur;
 
                         return;
                     }
@@ -2366,20 +2423,20 @@ namespace MBur.Collections.LockFree/*_v2f*/
             var new_seg = new ConcurrentDictionaryCycleBufferSegment(last.Messages.Length * 2);
 
             new_seg.WriterPosition = 1;
-            new_seg.Messages[0] = link.Positon;
+            new_seg.Messages[0]    = pos;
 
             last.Next = new_seg;
 
-            guest.Buffer.Writer = new_seg;
+            guest.MessageBuffer.Writer = new_seg;
 
             // Remove readed segments
             // It makes no reason to keep smaller segments. This reduces the
             // number of iterations for the read thread.
-            ref var node = ref guest.Buffer.Root;
+            ref var node = ref guest.MessageBuffer.Root;
 
             while (node != null)
             {
-                if (node == guest.Buffer.Root && node.Next == null)
+                if (node == guest.MessageBuffer.Root && node.Next == null)
                 {
                     break;
                 }
@@ -3018,7 +3075,8 @@ namespace MBur.Collections.LockFree/*_v2f*/
             Adding    = 02,
             Removing  = 04,
             Updating  = 08,
-            Growing   = 16
+            Growing   = 16,
+            Grown     = 32
         }
 
         /// <summary>
@@ -3030,9 +3088,10 @@ namespace MBur.Collections.LockFree/*_v2f*/
         {
             public HashTableData(int hashMaster, int threads)
             {
-                Frame    = new HashTableDataFrame(hashMaster);
-                Counts   = new ConcurrentDictionaryCounter[threads];
-                Cabinets = new Cabinet[threads];
+                Frame        = new HashTableDataFrame(hashMaster);
+                Counts       = new ConcurrentDictionaryCounter[threads];
+                Cabinets     = new Cabinet[threads];
+                GrowingFrame = null;
 
                 for (var i = 0; i < threads; ++i)
                 {
@@ -3054,8 +3113,11 @@ namespace MBur.Collections.LockFree/*_v2f*/
             // To synchronize threads when expanding the cabinets array
             public int SyncCabinets;
 
-            // Data frame
+            // Current data frame
             public HashTableDataFrame Frame;
+
+            // Datа frame in the process of growth.
+            public HashTableDataFrame GrowingFrame;
 
             // Array of counters
             public ConcurrentDictionaryCounter[] Counts;
@@ -3095,12 +3157,11 @@ namespace MBur.Collections.LockFree/*_v2f*/
                 ReadyPage   = -1;
                 Positon     = 0;
                 GuestsTable = new Guest[0];
-                //Buckets     = new Bucket[16];
                 Buckets     = new Bucket[WRITER_DELAY * 4];
            }
 
             // owner id
-            public int Id;
+            public readonly int Id;
             // Prepared page for a new record
             public int ReadyPage;
             // linked list of guests (convenient for the owner)
@@ -3122,10 +3183,11 @@ namespace MBur.Collections.LockFree/*_v2f*/
         {
             public Guest(int id)
             {
-                Id     = id;
-                Next   = null;
-                Buffer = new ConcurrentDictionaryCycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
-                DelayBuffer = new int[WRITER_DELAY];
+                Id               = id;
+                Next             = null;
+                MessageBuffer    = new ConcurrentDictionaryCycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
+                DelayBuffer      = new int[WRITER_DELAY];
+                DelayBufferReady = false;
             }
 
             // guest id
@@ -3133,7 +3195,9 @@ namespace MBur.Collections.LockFree/*_v2f*/
             // next guest
             public Guest Next;
             // cycle buffer
-            public ConcurrentDictionaryCycleBuffer Buffer;
+            public ConcurrentDictionaryCycleBuffer MessageBuffer;
+            //
+            public bool DelayBufferReady;
             //
             public int DelayPosition;
             // 

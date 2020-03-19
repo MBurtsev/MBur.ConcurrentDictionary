@@ -4,6 +4,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Benchmark.Helpers;
@@ -46,8 +47,8 @@ namespace Benchmark
 
             b.Threads = 4;
 
-            //b.AddSetup();
-            //b.Add();
+            b.AddSetup();
+            b.Add();
 
             //b.TryGetValueSetup();
             //b.TryGetValue();
@@ -106,37 +107,65 @@ namespace Benchmark
             }
         }
 
+        // now it works only in debug mode
+        // It is not yet clear how reliable the results are.
         static void MemoryUsage()
         {
-            MemoryUsage(new MBur.Collections.LockFree.ConcurrentDictionary<int, int>());
-            MemoryUsage(new System.Collections.Concurrent.ConcurrentDictionary<int, int>());
-        }
+            Console.WriteLine($"Memory usage for LockFree.ConcurrentDictionary");
 
-        static void MemoryUsage(IDictionary dictionary)
-        {
-            Console.WriteLine($"Memory usage for {dictionary.GetType().FullName}");
+            MemoryUsageLockFree(1);
+            MemoryUsageLockFree(1000);
+            MemoryUsageLockFree(1000_000);
+            MemoryUsageLockFree(10_000_000);
 
-            MemoryUsage(dictionary, 1);
-            MemoryUsage(dictionary, 256);
-            MemoryUsage(dictionary, 1000);
-            MemoryUsage(dictionary, 1000_000);
-            MemoryUsage(dictionary, 10_000_000);
+            Console.WriteLine();
+
+            Console.WriteLine($"Memory usage for Concurrent.ConcurrentDictionary");
+
+            MemoryUsage(1);
+            MemoryUsage(1000);
+            MemoryUsage(1000_000);
+            MemoryUsage(10_000_000);
 
             Console.WriteLine();
         }
 
-        static void MemoryUsage(IDictionary dictionary, int count)
+        static void MemoryUsage(int count)
         {
-            dictionary.Clear();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Optimized, blocking: true);
+            GC.WaitForPendingFinalizers();
 
-            var size = GC.GetTotalMemory(true);
+            var mem = GC.GetTotalMemory(true);
+            var dictionary = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
 
             for (var i = 0; i < count; ++i)
             {
                 dictionary[i] = i;
             }
 
-            var mem = GC.GetTotalMemory(true) - size;
+            mem = GC.GetTotalMemory(true) - mem;
+
+            Console.WriteLine();
+            Console.WriteLine($"Elements count: {count:### ### ### ###}");
+            Console.WriteLine($"Memory alocated: {mem:### ### ### ###}");
+            Console.WriteLine($"Size cost per item: {Math.Truncate((double)mem / count)}");
+        }
+
+        static void MemoryUsageLockFree(int count)
+        {
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Optimized, blocking: true);
+            GC.WaitForPendingFinalizers();
+
+            var mem = GC.GetTotalMemory(true);
+
+            var dictionary = new MBur.Collections.LockFree.ConcurrentDictionary<int, int>();
+
+            for (var i = 0; i < count; ++i)
+            {
+                dictionary[i] = i;
+            }
+
+            mem = GC.GetTotalMemory(true) - mem;
 
             Console.WriteLine();
             Console.WriteLine($"Elements count: {count:### ### ### ###}");

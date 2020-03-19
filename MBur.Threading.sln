@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Benchmark", "Benchmark\Benc
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MBur.Threading", "MBur.Threading\MBur.Threading.csproj", "{2A6C12FC-2249-4A63-A12B-67E8F0D376CD}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XUnitTest", "XUnitTest\XUnitTest.csproj", "{EBB30AED-C209-4843-BE7C-DDD271CC9D9B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{2A6C12FC-2249-4A63-A12B-67E8F0D376CD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2A6C12FC-2249-4A63-A12B-67E8F0D376CD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2A6C12FC-2249-4A63-A12B-67E8F0D376CD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EBB30AED-C209-4843-BE7C-DDD271CC9D9B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EBB30AED-C209-4843-BE7C-DDD271CC9D9B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EBB30AED-C209-4843-BE7C-DDD271CC9D9B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EBB30AED-C209-4843-BE7C-DDD271CC9D9B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
