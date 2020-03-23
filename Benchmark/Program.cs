@@ -34,8 +34,8 @@ namespace Benchmark
             //BenchmarkRunner.Run<CountBench>();
 
             //TryGetTest();
-            //Debug();
-            MemoryUsage();
+            Debug();
+            //MemoryUsage();
 
             Console.WriteLine("Complate");
             Console.ReadLine();
@@ -103,12 +103,16 @@ namespace Benchmark
                     }
                 });
 
-                Thread.Sleep(5_000);
+                Thread.Sleep(1_000);
             }
         }
 
-        // now it works only in debug mode
-        // It is not yet clear how reliable the results are.
+        #region ' Memory Usage '
+
+        // The test shows the memory usage depending on the number of added items.
+
+        static IDictionary dictionary;
+
         static void MemoryUsage()
         {
             Console.WriteLine($"Memory usage for LockFree.ConcurrentDictionary");
@@ -136,7 +140,8 @@ namespace Benchmark
             GC.WaitForPendingFinalizers();
 
             var mem = GC.GetTotalMemory(true);
-            var dictionary = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
+
+            dictionary = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
 
             for (var i = 0; i < count; ++i)
             {
@@ -149,6 +154,8 @@ namespace Benchmark
             Console.WriteLine($"Elements count: {count:### ### ### ###}");
             Console.WriteLine($"Memory alocated: {mem:### ### ### ###}");
             Console.WriteLine($"Size cost per item: {Math.Truncate((double)mem / count)}");
+
+            dictionary = null;
         }
 
         static void MemoryUsageLockFree(int count)
@@ -158,7 +165,7 @@ namespace Benchmark
 
             var mem = GC.GetTotalMemory(true);
 
-            var dictionary = new MBur.Collections.LockFree.ConcurrentDictionary<int, int>();
+            dictionary = new MBur.Collections.LockFree.ConcurrentDictionary<int, int>();
 
             for (var i = 0; i < count; ++i)
             {
@@ -171,6 +178,9 @@ namespace Benchmark
             Console.WriteLine($"Elements count: {count:### ### ### ###}");
             Console.WriteLine($"Memory alocated: {mem:### ### ### ###}");
             Console.WriteLine($"Size cost per item: {Math.Truncate((double)mem / count)}");
-        }
+
+            dictionary = null;
+        } 
+        #endregion
     }
 }

@@ -15,6 +15,7 @@ using Benchmark.Helpers;
 using System.Collections.Generic;
 using System.Threading;
 using MBur.Collections.LockFree;
+using System.Diagnostics;
 
 namespace Benchmark.ThreadsBench
 {
@@ -52,7 +53,6 @@ namespace Benchmark.ThreadsBench
         {
             bench.Begin();
         }
-
         void AddWork()
         {
             var key = Interlocked.Add(ref thread_id, 1) * threads_key_range;
