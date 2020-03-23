@@ -40,7 +40,7 @@ namespace MBur.Collections.LockFree/*_v2g*/
         // The size for first segments
         private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
         // The number of operations through which the page will be allowed to be used again.
-        private const int WRITER_DELAY = 4096;//64 ;
+        private const int WRITER_DELAY = 4096;//32
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
@@ -49,8 +49,6 @@ namespace MBur.Collections.LockFree/*_v2g*/
         private readonly int _capacity;
         // Prime numbers for sizes after growing table
         private int[] _primeSizes;
-        // Cuurent size
-        private int _currentSize;
         // To compare keys
         private readonly IEqualityComparer<TKey> _keysComparer;
         // To compare values
@@ -420,29 +418,18 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
             unchecked
             {
-                var data      = _data;
-                var comp      = _keysComparer;
-                var frame     = data.Frame;
-                var hash      = comp.GetHashCode(key) & 0x7fffffff;
-                var index     = hash % frame.HashMaster;
-                var sync      = frame.SyncTable[index];
+                var data  = _data;
+                var comp  = _keysComparer;
+                var frame = data.Frame;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var index = hash % frame.HashMaster;
+                var sync  = frame.SyncTable[index];
 
-                if ((sync & (int)RecordStatus.Grown) != 0)
+                while (sync == (int)RecordStatus.Grown)
                 {
                     frame = frame.Next;
-
-                    while (frame != null)
-                    {
-                        index = hash % frame.HashMaster;
-                        sync  = frame.SyncTable[index];
-
-                        if ((sync & (int)RecordStatus.Grown) == 0)
-                        {
-                            break;
-                        }
-
-                        frame = frame.Next;
-                    }
+                    index = hash % frame.HashMaster;
+                    sync  = frame.SyncTable[index];
                 }
 
                 var link = frame.Links[index];
@@ -495,24 +482,13 @@ namespace MBur.Collections.LockFree/*_v2g*/
                 var index = hash % frame.HashMaster;
                 var sync  = frame.SyncTable[index];
 
-                if ((sync & (int)RecordStatus.Grown) != 0)
+                while (sync == (int)RecordStatus.Grown)
                 {
                     frame = frame.Next;
-
-                    while (frame != null)
-                    {
-                        index = hash % frame.HashMaster;
-                        sync  = frame.SyncTable[index];
-
-                        if ((sync & (int)RecordStatus.Grown) == 0)
-                        {
-                            break;
-                        }
-
-                        frame = frame.Next;
-                    }
+                    index = hash % frame.HashMaster;
+                    sync  = frame.SyncTable[index];
                 }
-                
+
                 var link  = frame.Links[index];
                 ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
@@ -573,27 +549,16 @@ namespace MBur.Collections.LockFree/*_v2g*/
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
+                    var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -687,27 +652,16 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
+                    var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // return if empty
@@ -787,29 +741,17 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
+                    var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
-
 
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
@@ -904,23 +846,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1010,23 +941,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1130,23 +1050,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1252,23 +1161,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1383,23 +1281,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1543,23 +1430,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1693,23 +1569,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -1835,23 +1700,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
-                    if ((sync & (int)RecordStatus.Grown) != 0)
+                    while (sync == (int)RecordStatus.Grown)
                     {
                         frame = frame.Next;
-
-                        while (frame != null)
-                        {
-                            index = hash % frame.HashMaster;
-                            syncs = frame.SyncTable;
-                            sync  = syncs[index];
-
-                            if ((sync & (int)RecordStatus.Grown) == 0)
-                            {
-                                break;
-                            }
-
-                            frame = frame.Next;
-                        }
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
@@ -2023,7 +1877,7 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
         #region ' Private Area '
 
-        // Expand table function
+        // Expand table
         private void GrowTable(HashTableData data)
         {
             if (data.SyncGrowing > 0)
@@ -2045,12 +1899,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
                     var frame   = data.Frame;
                     var cabinet = GetCabinet(data);
 
-                    if (_currentSize == _primeSizes.Length)
+                    if (data.CurrentSize == _primeSizes.Length)
                     {
                         throw new OverflowException();
                     }
 
-                    Volatile.Write(ref frame.Next, new HashTableDataFrame(_primeSizes[_currentSize++]));
+                    Volatile.Write(ref frame.Next, new HashTableDataFrame(_primeSizes[data.CurrentSize++]));
 
                     while (frame.Next != null)
                     {
@@ -2093,10 +1947,10 @@ namespace MBur.Collections.LockFree/*_v2g*/
                         }
 
                         frame = frame.Next;
-                    }
 
-                    // write new data frame
-                    data.Frame = frame;
+                        // write new data frame
+                        Volatile.Write(ref data.Frame, frame);
+                    }
 
                     // unlock growing
                     data.SyncGrowing = 0;
@@ -2146,12 +2000,12 @@ namespace MBur.Collections.LockFree/*_v2g*/
             {
                 if (frame.Next == null)
                 {
-                    if (_currentSize == _primeSizes.Length)
+                    if (data.CurrentSize == _primeSizes.Length)
                     {
                         throw new OverflowException();
                     }
 
-                    Volatile.Write(ref frame.Next, new HashTableDataFrame(_primeSizes[_currentSize++]));
+                    Volatile.Write(ref frame.Next, new HashTableDataFrame(_primeSizes[data.CurrentSize++]));
                 }
 
                 // set current link
@@ -2175,23 +2029,6 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
                 // unlock
                 frame.SyncTable[index] = (int)RecordStatus.HasValue;
-            }
-        }
-
-        // Constructor initialization
-        private void InitializeFromCollection(IEnumerable<KeyValuePair<TKey, TValue>> collection)
-        {
-            foreach (KeyValuePair<TKey, TValue> pair in collection)
-            {
-                if (pair.Key == null)
-                {
-                    ThrowKeyNullException();
-                }
-
-                if (!TryAdd(pair.Key, pair.Value))
-                {
-                    throw new ArgumentException(SR.ConcurrentDictionary_SourceContainsDuplicateKeys);
-                }
             }
         }
 
@@ -2380,90 +2217,58 @@ namespace MBur.Collections.LockFree/*_v2g*/
                 // return removed element
                 if (guest != null)
                 {
-                    var seg = guest.MessageBuffer.Reader;
+                    var cur_guest = guest;
 
-                    if (seg.ReaderPosition != seg.WriterPosition)
+                    while (true)
                     {
-                        cabinet.ReadyPage = seg.Messages[seg.ReaderPosition];
-
-                        if (seg.ReaderPosition < seg.Messages.Length - 1)
-                        {
-                            seg.ReaderPosition++;
-                        }
-                        else
-                        {
-                            seg.ReaderPosition = 0;
-                        }
-
-                        return;
-                    }
-                    else
-                    {
-                        var cur_guest = guest;
+                        ref var cur_seg = ref cur_guest.MessageBuffer.Reader;
 
                         while (true)
                         {
-                            seg = cur_guest.MessageBuffer.Reader;
-
-                            var cur_seg = seg;
-
-                            while (true)
+                            // validation reader position
+                            if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
                             {
-                                // validation reader position
-                                if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
+                                cabinet.ReadyPage = cur_seg.Messages[cur_seg.ReaderPosition];
+
+                                // set position to next element for reading
+                                if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
                                 {
-                                    cabinet.ReadyPage = cur_seg.Messages[cur_seg.ReaderPosition];
-
-                                    // set position to next element for reading
-                                    if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
-                                    {
-                                        cur_seg.ReaderPosition++;
-                                    }
-                                    else
-                                    {
-                                        cur_seg.ReaderPosition = 0;
-                                    }
-
-                                    // save current guest
-                                    cabinet.Current = cur_guest;
-
-                                    // save current segment
-                                    cur_guest.MessageBuffer.Reader = cur_seg;
-
-                                    return;
+                                    cur_seg.ReaderPosition++;
+                                }
+                                else
+                                {
+                                    cur_seg.ReaderPosition = 0;
                                 }
 
-                                // swap to next segment
-                                cur_seg = cur_seg.Next;
+                                // save current guest
+                                cabinet.Current = cur_guest;
 
-                                if (cur_seg == null)
-                                {
-                                    cur_seg = cur_guest.MessageBuffer.Root;
-                                }
-
-                                if (cur_seg == seg)
-                                {
-                                    break;
-                                }
+                                return;
                             }
 
-                            // swap to next guest
-                            cur_guest = cur_guest.Next;
-
-                            if (cur_guest == null)
-                            {
-                                cur_guest = cabinet.GuestsList;
-                            }
-
-                            if (cur_guest == guest)
+                            if (cur_seg.Next == null)
                             {
                                 break;
                             }
+
+                            // swap to next segment
+                            cur_seg = cur_seg.Next;
+                        }
+
+                        // swap to next guest
+                        cur_guest = cur_guest.Next;
+
+                        if (cur_guest == null)
+                        {
+                            cur_guest = cabinet.GuestsList;
+                        }
+
+                        if (cur_guest == guest)
+                        {
+                            break;
                         }
                     }
                 }
-
-                //ValidateCabinet(cabinet);
 
                 // grow buckets
                 if (cabinet.Buckets.Length == int.MaxValue)
@@ -2482,11 +2287,135 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
                 Array.Copy(cabinet.Buckets, tmp, cabinet.Buckets.Length);
 
-                Volatile.Write(ref cabinet.Buckets, tmp);
-
-                //cabinet.Buckets   = tmp;
+                //Volatile.Write(ref cabinet.Buckets, tmp);
+                cabinet.Buckets   = tmp;
                 cabinet.ReadyPage = cabinet.Positon++;
             }
+        }
+        private void PreparePage2(Cabinet cabinet)
+        {
+            //if (cabinet.ReadyPage < 0)
+            //{
+            //    // return not used elememnt
+            //    if (cabinet.Positon < cabinet.Buckets.Length - WRITER_DELAY)
+            //    {
+            //        cabinet.ReadyPage = cabinet.Positon++;
+
+            //        return;
+            //    }
+
+            //    var guest = cabinet.Current ?? cabinet.GuestsList;
+
+            //    // return removed element
+            //    if (guest != null)
+            //    {
+            //        var seg = guest.MessageBuffer.Reader;
+
+            //        if (seg.ReaderPosition != seg.WriterPosition)
+            //        {
+            //            cabinet.ReadyPage = seg.Messages[seg.ReaderPosition];
+
+            //            if (seg.ReaderPosition < seg.Messages.Length - 1)
+            //            {
+            //                seg.ReaderPosition++;
+            //            }
+            //            else
+            //            {
+            //                seg.ReaderPosition = 0;
+            //            }
+
+            //            return;
+            //        }
+            //        else
+            //        {
+            //            var cur_guest = guest;
+
+            //            while (true)
+            //            {
+            //                seg = cur_guest.MessageBuffer.Reader;
+
+            //                var cur_seg = seg;
+
+            //                while (true)
+            //                {
+            //                    // validation reader position
+            //                    if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
+            //                    {
+            //                        cabinet.ReadyPage = cur_seg.Messages[cur_seg.ReaderPosition];
+
+            //                        // set position to next element for reading
+            //                        if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
+            //                        {
+            //                            cur_seg.ReaderPosition++;
+            //                        }
+            //                        else
+            //                        {
+            //                            cur_seg.ReaderPosition = 0;
+            //                        }
+
+            //                        // save current guest
+            //                        cabinet.Current = cur_guest;
+
+            //                        // save current segment
+            //                        cur_guest.MessageBuffer.Reader = cur_seg;
+
+            //                        return;
+            //                    }
+
+            //                    // swap to next segment
+            //                    cur_seg = cur_seg.Next;
+
+            //                    if (cur_seg == null)
+            //                    {
+            //                        cur_seg = cur_guest.MessageBuffer.Root;
+            //                    }
+
+            //                    if (cur_seg == seg)
+            //                    {
+            //                        break;
+            //                    }
+            //                }
+
+            //                // swap to next guest
+            //                cur_guest = cur_guest.Next;
+
+            //                if (cur_guest == null)
+            //                {
+            //                    cur_guest = cabinet.GuestsList;
+            //                }
+
+            //                if (cur_guest == guest)
+            //                {
+            //                    break;
+            //                }
+            //            }
+            //        }
+            //    }
+
+            //    //ValidateCabinet(cabinet);
+
+            //    // grow buckets
+            //    if (cabinet.Buckets.Length == int.MaxValue)
+            //    {
+            //        throw new OverflowException();
+            //    }
+
+            //    var len = cabinet.Buckets.Length * 2d;
+
+            //    if (len > int.MaxValue)
+            //    {
+            //        len = int.MaxValue;
+            //    }
+
+            //    var tmp = new Bucket[(int)len];
+
+            //    Array.Copy(cabinet.Buckets, tmp, cabinet.Buckets.Length);
+
+            //    Volatile.Write(ref cabinet.Buckets, tmp);
+
+            //    //cabinet.Buckets   = tmp;
+            //    cabinet.ReadyPage = cabinet.Positon++;
+            //}
         }
 
         // 
@@ -2597,87 +2526,210 @@ namespace MBur.Collections.LockFree/*_v2g*/
                 }
             }
 
-            var cur  = seg.Next;
-            var last = null as ConcurrentDictionaryCycleBufferSegment;// guest.MessageBuffer.Root;
-
-            // search for segment with free cells
-            while (true)
-            {
-                if (cur == null)
-                {
-                    cur = guest.MessageBuffer.Root;
-                }
-
-                if (cur.Next == null)
-                {
-                    last = cur;
-                }
-
-                if (cur == seg)
-                {
-                    break;
-                }
-
-                if (cur.WriterPosition != cur.ReaderPosition - 1)
-                {
-                    if (cur.WriterPosition == cur.Messages.Length - 1)
-                    {
-                        if (cur.ReaderPosition > 0)
-                        {
-                            cur.Messages[cur.WriterPosition] = pos;
-                            cur.WriterPosition = 0;
-
-                            guest.MessageBuffer.Writer = cur;
-
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        cur.Messages[cur.WriterPosition++] = pos;
-
-                        guest.MessageBuffer.Writer = cur;
-
-                        return;
-                    }
-                }
-
-                cur = cur.Next;
-            }
-
-            //Console.WriteLine("create new segment");
-            
             // create new segment
-            var new_seg = new ConcurrentDictionaryCycleBufferSegment(last.Messages.Length * 2);
+            var new_seg = new CycleBufferSegment(seg.Messages.Length * 2);
 
             new_seg.WriterPosition = 1;
             new_seg.Messages[0]    = pos;
 
-            last.Next = new_seg;
+            seg.Next = new_seg;
 
             guest.MessageBuffer.Writer = new_seg;
 
             // Remove readed segments
             // It makes no reason to keep smaller segments. This reduces the
             // number of iterations for the read thread.
-            //ref var node = ref guest.MessageBuffer.Root;
 
-            //while (node != null)
+
+
+        }
+        private void RemoveLink2(HashTableData data, Link link, int guest_id)
+        {
+            //if (link.Id == 0)
             //{
-            //    if (node == guest.MessageBuffer.Root && node.Next == null)
+            //    return;
+            //}
+
+            //Guest guest;
+
+            //var owner = data.Cabinets[link.Id];
+            //var table = owner.GuestsTable;
+
+            //// grow guests table
+            //if (guest_id >= table.Length)
+            //{
+            //    try
+            //    {
+            //        while (Interlocked.CompareExchange(ref owner.Sync, guest_id, 0) != 0)
+            //        {
+            //        }
+
+            //        table = Volatile.Read(ref owner.GuestsTable);
+
+            //        if (guest_id >= table.Length)
+            //        {
+            //            var len = (guest_id / 4 + 1) * 4;
+            //            var tmp = new Guest[len];
+
+            //            Array.Copy(table, tmp, table.Length);
+
+            //            owner.GuestsTable = table = tmp;
+            //        }
+            //    }
+            //    finally
+            //    {
+            //        owner.Sync = 0;
+            //    }
+            //}
+
+            //// setup new guest
+            //if (table[guest_id] == null)
+            //{
+            //    guest = new Guest(guest_id);
+
+            //    try
+            //    {
+            //        while (Interlocked.CompareExchange(ref owner.Sync, guest_id, 0) != 0)
+            //        {
+            //        }
+
+            //        guest.Next = Volatile.Read(ref owner.GuestsList);
+
+            //        owner.GuestsList = guest;
+
+            //        table[guest_id] = guest;
+
+            //    }
+            //    finally
+            //    {
+            //        owner.Sync = 0;
+            //    }
+            //}
+
+            //guest = table[guest_id];
+
+            //// write to delay buffer
+            //if (guest.DelayPosition == WRITER_DELAY)
+            //{
+            //    guest.DelayPosition = 0;
+            //    guest.DelayBufferReady = true;
+            //}
+
+            //if (!guest.DelayBufferReady)
+            //{
+            //    guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
+
+            //    return;
+            //}
+
+            //var pos = guest.DelayBuffer[guest.DelayPosition];
+
+            //guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
+
+            //var seg = guest.MessageBuffer.Writer;
+
+            //// write message
+            //if (seg.WriterPosition != seg.ReaderPosition - 1)
+            //{
+            //    if (seg.WriterPosition == seg.Messages.Length - 1)
+            //    {
+            //        if (seg.ReaderPosition > 0)
+            //        {
+            //            seg.Messages[seg.WriterPosition] = pos;
+            //            seg.WriterPosition = 0;
+
+            //            return;
+            //        }
+            //    }
+            //    else
+            //    {
+            //        seg.Messages[seg.WriterPosition++] = pos;
+
+            //        return;
+            //    }
+            //}
+
+            //var cur  = seg.Next;
+            //var last = null as ConcurrentDictionaryCycleBufferSegment;// guest.MessageBuffer.Root;
+
+            //// search for segment with free cells
+            //while (true)
+            //{
+            //    if (cur == null)
+            //    {
+            //        cur = guest.MessageBuffer.Root;
+            //    }
+
+            //    if (cur.Next == null)
+            //    {
+            //        last = cur;
+            //    }
+
+            //    if (cur == seg)
             //    {
             //        break;
             //    }
 
-            //    if (node.ReaderPosition == node.WriterPosition)
+            //    if (cur.WriterPosition != cur.ReaderPosition - 1)
             //    {
-            //        node = node.Next;
+            //        if (cur.WriterPosition == cur.Messages.Length - 1)
+            //        {
+            //            if (cur.ReaderPosition > 0)
+            //            {
+            //                cur.Messages[cur.WriterPosition] = pos;
+            //                cur.WriterPosition = 0;
+
+            //                guest.MessageBuffer.Writer = cur;
+
+            //                return;
+            //            }
+            //        }
+            //        else
+            //        {
+            //            cur.Messages[cur.WriterPosition++] = pos;
+
+            //            guest.MessageBuffer.Writer = cur;
+
+            //            return;
+            //        }
             //    }
-            //    else
-            //    {
-            //        node = ref node.Next;
-            //    }
+
+            //    cur = cur.Next;
             //}
+
+            ////Console.WriteLine("create new segment");
+            
+            //// create new segment
+            //var new_seg = new ConcurrentDictionaryCycleBufferSegment(last.Messages.Length * 2);
+
+            //new_seg.WriterPosition = 1;
+            //new_seg.Messages[0]    = pos;
+
+            //last.Next = new_seg;
+
+            //guest.MessageBuffer.Writer = new_seg;
+
+            //// Remove readed segments
+            //// It makes no reason to keep smaller segments. This reduces the
+            //// number of iterations for the read thread.
+            ////ref var node = ref guest.MessageBuffer.Root;
+
+            ////while (node != null)
+            ////{
+            ////    if (node == guest.MessageBuffer.Root && node.Next == null)
+            ////    {
+            ////        break;
+            ////    }
+
+            ////    if (node.ReaderPosition == node.WriterPosition)
+            ////    {
+            ////        node = node.Next;
+            ////    }
+            ////    else
+            ////    {
+            ////        node = ref node.Next;
+            ////    }
+            ////}
         }
 
         #endregion
@@ -3319,6 +3371,7 @@ namespace MBur.Collections.LockFree/*_v2g*/
                 Frame        = new HashTableDataFrame(hashMaster);
                 Counts       = new ConcurrentDictionaryCounter[threads];
                 Cabinets     = new Cabinet[threads];
+                CurrentSize  = 0;
 
                 for (var i = 0; i < threads; ++i)
                 {
@@ -3348,6 +3401,9 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
             // 
             public Cabinet[] Cabinets;
+
+            // Current size
+            public int CurrentSize;
         }
 
         /// <summary>
@@ -3413,7 +3469,7 @@ namespace MBur.Collections.LockFree/*_v2g*/
             {
                 Id               = id;
                 Next             = null;
-                MessageBuffer    = new ConcurrentDictionaryCycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
+                MessageBuffer    = new CycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
                 DelayBuffer      = new int[WRITER_DELAY];
                 DelayBufferReady = false;
             }
@@ -3423,13 +3479,53 @@ namespace MBur.Collections.LockFree/*_v2g*/
             // next guest
             public Guest Next;
             // cycle buffer
-            public ConcurrentDictionaryCycleBuffer MessageBuffer;
+            public CycleBuffer MessageBuffer;
             //
             public bool DelayBufferReady;
             //
             public int DelayPosition;
             // 
             public int[] DelayBuffer;
+        }
+
+        // A cycle buffer that implements a producer-consumer pattern. 
+        // Fully Wait-Free implementation.
+        internal class CycleBuffer
+        {
+            public CycleBuffer(int capacity)
+            {
+                var seg = new CycleBufferSegment(capacity);
+
+                Reader = seg;
+                Writer = seg;
+            }
+
+            // current reader segment
+            public CycleBufferSegment Reader;
+            // current writer segment
+            public CycleBufferSegment Writer;
+        }
+
+        // If the reading thread does not manage to process messages, a 
+        // new segment is created. If all messages are read, the segment is deleted.
+        internal class CycleBufferSegment
+        {
+            public CycleBufferSegment(int capacity)
+            {
+                Messages = new int[capacity];
+            }
+
+            // Reading thread position
+            public int ReaderPosition;
+
+            // Writing thread position
+            public int WriterPosition;
+
+            // Each message is a position in buckets array
+            public int[] Messages;
+
+            // Next segment
+            public CycleBufferSegment Next;
         }
 
         //
@@ -3715,6 +3811,23 @@ namespace MBur.Collections.LockFree/*_v2g*/
             return tmp;
         }
 
+        // Constructor initialization
+        private void InitializeFromCollection(IEnumerable<KeyValuePair<TKey, TValue>> collection)
+        {
+            foreach (KeyValuePair<TKey, TValue> pair in collection)
+            {
+                if (pair.Key == null)
+                {
+                    ThrowKeyNullException();
+                }
+
+                if (!TryAdd(pair.Key, pair.Value))
+                {
+                    throw new ArgumentException(SR.ConcurrentDictionary_SourceContainsDuplicateKeys);
+                }
+            }
+        }
+
         #endregion
 
         #region ' Debug ' 
@@ -3759,7 +3872,7 @@ namespace MBur.Collections.LockFree/*_v2g*/
 
                 // check segments
                 // ----------------------------------
-                var seg = guest.MessageBuffer.Root;
+                var seg = guest.MessageBuffer.Reader;
 
                 while (seg != null)
                 {
@@ -3845,47 +3958,6 @@ namespace MBur.Collections.LockFree/*_v2g*/
     {
         [FieldOffset(0)]
         public long Count;
-    }
-
-    // 
-    //[StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE * 4)]
-    internal class ConcurrentDictionaryCycleBuffer
-    {
-        public ConcurrentDictionaryCycleBuffer(int capacity)
-        {
-            Root = new ConcurrentDictionaryCycleBufferSegment(capacity);
-            Reader = Root;
-            Writer = Root;
-        }
-
-        // the first segment
-        public ConcurrentDictionaryCycleBufferSegment Root;
-        // current reader segment
-        public ConcurrentDictionaryCycleBufferSegment Reader;
-        // current writer segment
-        public ConcurrentDictionaryCycleBufferSegment Writer;
-    }
-
-    // 
-    //[StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE * 4)]
-    internal class ConcurrentDictionaryCycleBufferSegment
-    {
-        public ConcurrentDictionaryCycleBufferSegment(int capacity)
-        {
-            Messages = new int[capacity];
-        }
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 1)]
-        public int ReaderPosition;
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 2)]
-        public int WriterPosition;
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 3)]
-        public int[] Messages;
-
-        //[FieldOffset(PaddingHelpers.CACHE_LINE_SIZE * 4)]
-        public ConcurrentDictionaryCycleBufferSegment Next;
     }
 
     /// <summary>

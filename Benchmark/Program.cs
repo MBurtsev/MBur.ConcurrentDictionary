@@ -34,7 +34,7 @@ namespace Benchmark
             //BenchmarkRunner.Run<CountBench>();
 
             //TryGetTest();
-            Debug();
+            //Debug();
             //MemoryUsage();
 
             Console.WriteLine("Complate");
@@ -47,8 +47,8 @@ namespace Benchmark
 
             b.Threads = 4;
 
-            b.AddSetup();
-            b.Add();
+            //b.AddSetup();
+            //b.Add();
 
             //b.TryGetValueSetup();
             //b.TryGetValue();
@@ -136,7 +136,7 @@ namespace Benchmark
 
         static void MemoryUsage(int count)
         {
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Optimized, blocking: true);
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
             GC.WaitForPendingFinalizers();
 
             var mem = GC.GetTotalMemory(true);
@@ -160,7 +160,7 @@ namespace Benchmark
 
         static void MemoryUsageLockFree(int count)
         {
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Optimized, blocking: true);
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
             GC.WaitForPendingFinalizers();
 
             var mem = GC.GetTotalMemory(true);

@@ -52,7 +52,12 @@ namespace Benchmark.ThreadsBench
         public void Add()
         {
             bench.Begin();
+
+            //var id = 5;
+
+            //data.ValidateCabinet(id);
         }
+
         void AddWork()
         {
             var key = Interlocked.Add(ref thread_id, 1) * threads_key_range;
@@ -61,6 +66,8 @@ namespace Benchmark.ThreadsBench
             {
                 data.TryAdd(key + i, i);
             }
+
+            //Debug.WriteLine(Thread.CurrentThread.ManagedThreadId);
         }
 
 #endif

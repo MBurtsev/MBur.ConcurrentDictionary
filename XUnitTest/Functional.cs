@@ -51,15 +51,15 @@ namespace XUnitTest
         // L    = AddOrUpdate(TKey key, TValue addValue, Func<TKey, TValue, TValue> updateValueFactory)
         // M    = AddOrUpdate(TKey key, TValue addValue, TValue updateValue)
 
-#region ' A. ContainsKey '
+        #region ' A. ContainsKey '
 
-#endregion
+        #endregion
 
-#region ' B. TryGetValue '
+        #region ' B. TryGetValue '
 
-#endregion
+        #endregion
 
-#region ' C. TryAdd '
+        #region ' C. TryAdd '
 
         [Fact]
         public static void TryAdd_C1()
@@ -172,12 +172,7 @@ namespace XUnitTest
                 {
                     var key = j + t * THREADS_KEY_RANGE;
 
-                    //if (!cd.ContainsKey(key))
-                    //{
-                    //    var bp = 0;
-                    //}
-
-                    Assert.True(cd.ContainsKey(key), key.ToString());
+                    Assert.True(cd.ContainsKey(key));
 
                     if (dict.ContainsKey(j))
                     {
