@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree/*_v2g*/
+namespace MBur.Collections.LockFree/*_v2*/
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -40,7 +40,7 @@ namespace MBur.Collections.LockFree/*_v2g*/
         // The size for first segments
         private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
         // The number of operations through which the page will be allowed to be used again.
-        private const int WRITER_DELAY = 4096;//32
+        private const int WRITER_DELAY = 4096;//1024
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.

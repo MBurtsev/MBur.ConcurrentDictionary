@@ -35,7 +35,7 @@ namespace Benchmark
 
             //TryGetTest();
             //Debug();
-            //MemoryUsage();
+            MemoryUsage();
 
             Console.WriteLine("Complate");
             Console.ReadLine();
@@ -115,12 +115,12 @@ namespace Benchmark
 
         static void MemoryUsage()
         {
-            Console.WriteLine($"Memory usage for LockFree.ConcurrentDictionary");
+            Console.WriteLine($"Memory usage for LockFree.ConcurrentDictionary v2");
 
-            MemoryUsageLockFree(1);
-            MemoryUsageLockFree(1000);
-            MemoryUsageLockFree(1000_000);
-            MemoryUsageLockFree(10_000_000);
+            MemoryUsageLockFree_v2(1);
+            MemoryUsageLockFree_v2(1000);
+            MemoryUsageLockFree_v2(1000_000);
+            MemoryUsageLockFree_v2(10_000_000);
 
             Console.WriteLine();
 
@@ -158,7 +158,7 @@ namespace Benchmark
             dictionary = null;
         }
 
-        static void MemoryUsageLockFree(int count)
+        static void MemoryUsageLockFree_v2(int count)
         {
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
             GC.WaitForPendingFinalizers();
