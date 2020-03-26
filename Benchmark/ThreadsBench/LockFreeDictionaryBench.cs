@@ -1,6 +1,11 @@
 ﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
+// Select version
+#define v1
+//#define v2
+
+// Select benchmarks
 #define TRY_ADD
 #define TRY_GET_VALUE
 #define TRY_REMOVE
@@ -14,8 +19,19 @@ using BenchmarkDotNet.Attributes;
 using Benchmark.Helpers;
 using System.Collections.Generic;
 using System.Threading;
-using MBur.Collections.LockFree;
 using System.Diagnostics;
+
+#if v1
+
+using MBur.Collections.LockFree_v1;
+
+#endif
+
+#if v2
+
+using MBur.Collections.LockFree;
+
+#endif
 
 namespace Benchmark.ThreadsBench
 {

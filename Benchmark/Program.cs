@@ -10,7 +10,8 @@ using System.Threading.Tasks;
 using Benchmark.Helpers;
 using Benchmark.ThreadsBench;
 using BenchmarkDotNet.Running;
-using MBur.Collections.LockFree;
+//using MBur.Collections.LockFree;
+using MBur.Collections.LockFree_v1;
 
 namespace Benchmark
 {
@@ -27,7 +28,7 @@ namespace Benchmark
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
             // LockFreeDictionary
-            //BenchmarkRunner.Run<LockFreeDictionaryBench>();
+            BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
             // Wat-Free Count
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
@@ -35,9 +36,9 @@ namespace Benchmark
 
             //TryGetTest();
             //Debug();
-            MemoryUsage();
+            //MemoryUsage();
 
-            Console.WriteLine("Complate");
+            Console.WriteLine("Press any key for exit");
             Console.ReadLine();
         }
 

@@ -1,5 +1,5 @@
-//#define LockFree_v1
-#define LockFree_v2
+#define LockFree_v1
+//#define LockFree_v2
 //#define Concurrent
 
 using System;
@@ -692,6 +692,9 @@ namespace XUnitTest
 
         #region ' E. TryRemove '
 
+        // This overload of TryRemove included in .net5
+#if LockFree_v1 || LockFree_v2
+
         [Fact]
         public static void TryRemove_E1()
         {
@@ -835,7 +838,7 @@ namespace XUnitTest
                 throw new Exception("Must be nothing");
             }
         }
-
+#endif
         #endregion
 
         #region ' F. TryUpdate '
@@ -956,6 +959,83 @@ namespace XUnitTest
 
             Assert.True(exception == null);
             Assert.Equal(cd.Count, 1);
+        }
+
+        // Update and enumeration
+        [Fact]
+        public static void TryUpdate_F3()
+        {
+            TryUpdate_F3_Test(1);
+            TryUpdate_F3_Test(2);
+            TryUpdate_F3_Test(4);
+        }
+        static void TryUpdate_F3_Test(int threads)
+        {
+            var ready = 0;
+            var exception = null as Exception;
+            var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
+            var cts = new CancellationTokenSource();
+
+            for (var i = 0; i < threads; ++i)
+            {
+                // writer
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        for (var j = 0L; j < OPERATIONS; ++j)
+                        {
+                            cd[0] = new KeyValuePair<long, long>(j, j);
+                        }
+
+                        Interlocked.Add(ref ready, 1);
+                    }
+                    catch (Exception e)
+                    {
+                        exception = e;
+
+                        ready = threads;
+
+                        cts.Cancel();
+                    }
+                }, cts.Token);
+
+                // reader
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        while(true)
+                        {
+                            foreach (var item in cd)
+                            {
+                                if (item.Value.Key != item.Value.Value)
+                                {
+                                    throw new Exception($"{item.Key} != {item.Value}");
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        exception = e;
+
+                        ready = threads;
+
+                        cts.Cancel();
+                    }
+                }, cts.Token);
+            }
+
+            while (Volatile.Read(ref ready) < threads)
+            {
+                Thread.Yield();
+            }
+
+            cts.Cancel();
+
+            Assert.True(exception == null);
+            Assert.Single(cd);
         }
 
         #endregion
@@ -1261,7 +1341,14 @@ namespace XUnitTest
 
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
+
+#if LockFree_v1 || LockFree_v2
+            // The LockFree hash table calls valueFactory only if it is really needed 
+            // and the value will be used to insert or update. The current version may 
+            // call valueFactory even if the value will not be used, which is a drawback.
+            
             Assert.Equal(requested, OPERATIONS);
+#endif
 
             for (var j = 0L; j < OPERATIONS; ++j)
             {
@@ -1527,7 +1614,14 @@ namespace XUnitTest
 
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
+
+#if LockFree_v1 || LockFree_v2
+            // The LockFree hash table calls valueFactory only if it is really needed 
+            // and the value will be used to insert or update. The current version may 
+            // call valueFactory even if the value will not be used, which is a drawback.
+            
             Assert.Equal(requested, OPERATIONS);
+#endif
 
             for (var j = 0L; j < OPERATIONS; ++j)
             {
@@ -1735,7 +1829,7 @@ namespace XUnitTest
             Assert.Single(cd);
         }
 
-        #endregion
+#endregion
 
         #region ' J. AddOrUpdate '
 
@@ -1800,7 +1894,14 @@ namespace XUnitTest
 
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
+
+#if LockFree_v1 || LockFree_v2
+            // The LockFree hash table calls valueFactory only if it is really needed 
+            // and the value will be used to insert or update. The current version may 
+            // call valueFactory even if the value will not be used, which is a drawback.
+            
             Assert.Equal(requested, OPERATIONS * threads);
+#endif
 
             for (var j = 0L; j < OPERATIONS; ++j)
             {
@@ -2001,7 +2102,7 @@ namespace XUnitTest
             }
         }
 
-        #endregion
+#endregion
 
         #region ' K. AddOrUpdate '
 
@@ -2066,7 +2167,14 @@ namespace XUnitTest
 
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
+            
+#if LockFree_v1 || LockFree_v2
+            // The LockFree hash table calls valueFactory only if it is really needed 
+            // and the value will be used to insert or update. The current version may 
+            // call valueFactory even if the value will not be used, which is a drawback.
+            
             Assert.Equal(requested, OPERATIONS * threads);
+#endif
 
             for (var j = 0L; j < OPERATIONS; ++j)
             {
@@ -2267,7 +2375,7 @@ namespace XUnitTest
             }
         }
 
-        #endregion
+#endregion
 
         #region ' L. AddOrUpdate '
 
@@ -2514,7 +2622,7 @@ namespace XUnitTest
             }
         }
 
-        #endregion
+#endregion
 
         #region ' M. AddOrUpdate '
 
@@ -2740,6 +2848,6 @@ namespace XUnitTest
             }
         }
 #endif
-        #endregion
+#endregion
     }
 }

@@ -2199,7 +2199,6 @@ namespace MBur.Collections.LockFree/*_v2*/
         }
         
         // 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void PreparePage(Cabinet cabinet)
         {
             if (cabinet.ReadyPage < 0)
@@ -2292,134 +2291,8 @@ namespace MBur.Collections.LockFree/*_v2*/
                 cabinet.ReadyPage = cabinet.Positon++;
             }
         }
-        private void PreparePage2(Cabinet cabinet)
-        {
-            //if (cabinet.ReadyPage < 0)
-            //{
-            //    // return not used elememnt
-            //    if (cabinet.Positon < cabinet.Buckets.Length - WRITER_DELAY)
-            //    {
-            //        cabinet.ReadyPage = cabinet.Positon++;
-
-            //        return;
-            //    }
-
-            //    var guest = cabinet.Current ?? cabinet.GuestsList;
-
-            //    // return removed element
-            //    if (guest != null)
-            //    {
-            //        var seg = guest.MessageBuffer.Reader;
-
-            //        if (seg.ReaderPosition != seg.WriterPosition)
-            //        {
-            //            cabinet.ReadyPage = seg.Messages[seg.ReaderPosition];
-
-            //            if (seg.ReaderPosition < seg.Messages.Length - 1)
-            //            {
-            //                seg.ReaderPosition++;
-            //            }
-            //            else
-            //            {
-            //                seg.ReaderPosition = 0;
-            //            }
-
-            //            return;
-            //        }
-            //        else
-            //        {
-            //            var cur_guest = guest;
-
-            //            while (true)
-            //            {
-            //                seg = cur_guest.MessageBuffer.Reader;
-
-            //                var cur_seg = seg;
-
-            //                while (true)
-            //                {
-            //                    // validation reader position
-            //                    if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
-            //                    {
-            //                        cabinet.ReadyPage = cur_seg.Messages[cur_seg.ReaderPosition];
-
-            //                        // set position to next element for reading
-            //                        if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
-            //                        {
-            //                            cur_seg.ReaderPosition++;
-            //                        }
-            //                        else
-            //                        {
-            //                            cur_seg.ReaderPosition = 0;
-            //                        }
-
-            //                        // save current guest
-            //                        cabinet.Current = cur_guest;
-
-            //                        // save current segment
-            //                        cur_guest.MessageBuffer.Reader = cur_seg;
-
-            //                        return;
-            //                    }
-
-            //                    // swap to next segment
-            //                    cur_seg = cur_seg.Next;
-
-            //                    if (cur_seg == null)
-            //                    {
-            //                        cur_seg = cur_guest.MessageBuffer.Root;
-            //                    }
-
-            //                    if (cur_seg == seg)
-            //                    {
-            //                        break;
-            //                    }
-            //                }
-
-            //                // swap to next guest
-            //                cur_guest = cur_guest.Next;
-
-            //                if (cur_guest == null)
-            //                {
-            //                    cur_guest = cabinet.GuestsList;
-            //                }
-
-            //                if (cur_guest == guest)
-            //                {
-            //                    break;
-            //                }
-            //            }
-            //        }
-            //    }
-
-            //    //ValidateCabinet(cabinet);
-
-            //    // grow buckets
-            //    if (cabinet.Buckets.Length == int.MaxValue)
-            //    {
-            //        throw new OverflowException();
-            //    }
-
-            //    var len = cabinet.Buckets.Length * 2d;
-
-            //    if (len > int.MaxValue)
-            //    {
-            //        len = int.MaxValue;
-            //    }
-
-            //    var tmp = new Bucket[(int)len];
-
-            //    Array.Copy(cabinet.Buckets, tmp, cabinet.Buckets.Length);
-
-            //    Volatile.Write(ref cabinet.Buckets, tmp);
-
-            //    //cabinet.Buckets   = tmp;
-            //    cabinet.ReadyPage = cabinet.Positon++;
-            //}
-        }
 
         // 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RemoveLink(HashTableData data, Link link, int guest_id)
         {
             if (link.Id == 0)
@@ -2542,194 +2415,6 @@ namespace MBur.Collections.LockFree/*_v2*/
 
 
 
-        }
-        private void RemoveLink2(HashTableData data, Link link, int guest_id)
-        {
-            //if (link.Id == 0)
-            //{
-            //    return;
-            //}
-
-            //Guest guest;
-
-            //var owner = data.Cabinets[link.Id];
-            //var table = owner.GuestsTable;
-
-            //// grow guests table
-            //if (guest_id >= table.Length)
-            //{
-            //    try
-            //    {
-            //        while (Interlocked.CompareExchange(ref owner.Sync, guest_id, 0) != 0)
-            //        {
-            //        }
-
-            //        table = Volatile.Read(ref owner.GuestsTable);
-
-            //        if (guest_id >= table.Length)
-            //        {
-            //            var len = (guest_id / 4 + 1) * 4;
-            //            var tmp = new Guest[len];
-
-            //            Array.Copy(table, tmp, table.Length);
-
-            //            owner.GuestsTable = table = tmp;
-            //        }
-            //    }
-            //    finally
-            //    {
-            //        owner.Sync = 0;
-            //    }
-            //}
-
-            //// setup new guest
-            //if (table[guest_id] == null)
-            //{
-            //    guest = new Guest(guest_id);
-
-            //    try
-            //    {
-            //        while (Interlocked.CompareExchange(ref owner.Sync, guest_id, 0) != 0)
-            //        {
-            //        }
-
-            //        guest.Next = Volatile.Read(ref owner.GuestsList);
-
-            //        owner.GuestsList = guest;
-
-            //        table[guest_id] = guest;
-
-            //    }
-            //    finally
-            //    {
-            //        owner.Sync = 0;
-            //    }
-            //}
-
-            //guest = table[guest_id];
-
-            //// write to delay buffer
-            //if (guest.DelayPosition == WRITER_DELAY)
-            //{
-            //    guest.DelayPosition = 0;
-            //    guest.DelayBufferReady = true;
-            //}
-
-            //if (!guest.DelayBufferReady)
-            //{
-            //    guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
-
-            //    return;
-            //}
-
-            //var pos = guest.DelayBuffer[guest.DelayPosition];
-
-            //guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
-
-            //var seg = guest.MessageBuffer.Writer;
-
-            //// write message
-            //if (seg.WriterPosition != seg.ReaderPosition - 1)
-            //{
-            //    if (seg.WriterPosition == seg.Messages.Length - 1)
-            //    {
-            //        if (seg.ReaderPosition > 0)
-            //        {
-            //            seg.Messages[seg.WriterPosition] = pos;
-            //            seg.WriterPosition = 0;
-
-            //            return;
-            //        }
-            //    }
-            //    else
-            //    {
-            //        seg.Messages[seg.WriterPosition++] = pos;
-
-            //        return;
-            //    }
-            //}
-
-            //var cur  = seg.Next;
-            //var last = null as ConcurrentDictionaryCycleBufferSegment;// guest.MessageBuffer.Root;
-
-            //// search for segment with free cells
-            //while (true)
-            //{
-            //    if (cur == null)
-            //    {
-            //        cur = guest.MessageBuffer.Root;
-            //    }
-
-            //    if (cur.Next == null)
-            //    {
-            //        last = cur;
-            //    }
-
-            //    if (cur == seg)
-            //    {
-            //        break;
-            //    }
-
-            //    if (cur.WriterPosition != cur.ReaderPosition - 1)
-            //    {
-            //        if (cur.WriterPosition == cur.Messages.Length - 1)
-            //        {
-            //            if (cur.ReaderPosition > 0)
-            //            {
-            //                cur.Messages[cur.WriterPosition] = pos;
-            //                cur.WriterPosition = 0;
-
-            //                guest.MessageBuffer.Writer = cur;
-
-            //                return;
-            //            }
-            //        }
-            //        else
-            //        {
-            //            cur.Messages[cur.WriterPosition++] = pos;
-
-            //            guest.MessageBuffer.Writer = cur;
-
-            //            return;
-            //        }
-            //    }
-
-            //    cur = cur.Next;
-            //}
-
-            ////Console.WriteLine("create new segment");
-            
-            //// create new segment
-            //var new_seg = new ConcurrentDictionaryCycleBufferSegment(last.Messages.Length * 2);
-
-            //new_seg.WriterPosition = 1;
-            //new_seg.Messages[0]    = pos;
-
-            //last.Next = new_seg;
-
-            //guest.MessageBuffer.Writer = new_seg;
-
-            //// Remove readed segments
-            //// It makes no reason to keep smaller segments. This reduces the
-            //// number of iterations for the read thread.
-            ////ref var node = ref guest.MessageBuffer.Root;
-
-            ////while (node != null)
-            ////{
-            ////    if (node == guest.MessageBuffer.Root && node.Next == null)
-            ////    {
-            ////        break;
-            ////    }
-
-            ////    if (node.ReaderPosition == node.WriterPosition)
-            ////    {
-            ////        node = node.Next;
-            ////    }
-            ////    else
-            ////    {
-            ////        node = ref node.Next;
-            ////    }
-            ////}
         }
 
         #endregion
@@ -3952,6 +3637,21 @@ namespace MBur.Collections.LockFree/*_v2*/
     }
 
     // 
+    [DebuggerDisplay("Id = {Id}, Positon = {Positon}")]
+    [StructLayout(LayoutKind.Explicit, Size = 8)]
+    internal struct Link
+    {
+        // owner id
+        [FieldOffset(0)]
+        public int Id;
+        // entry index
+        [FieldOffset(4)]
+        public int Positon;
+        [FieldOffset(0)]
+        public long Int64View;
+    }
+
+    // 
     [DebuggerDisplay("Count = {Count}")]
     [StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE)]
     internal class ConcurrentDictionaryCounter
@@ -3996,20 +3696,5 @@ namespace MBur.Collections.LockFree/*_v2*/
                 return items;
             }
         }
-    }
-
-    // 
-    [DebuggerDisplay("Id = {Id}, Positon = {Positon}")]
-    [StructLayout(LayoutKind.Explicit, Size = 8)]
-    internal struct Link
-    {
-        // owner id
-        [FieldOffset(0)]
-        public int Id;
-        // entry index
-        [FieldOffset(4)]
-        public int Positon;
-        [FieldOffset(0)]
-        public long Int64View;
     }
 }

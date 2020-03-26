@@ -1,4 +1,4 @@
-﻿// Maksim Burtsev https://github.com/MBurtsev
+﻿ // Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
 using System;
@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree_v1
+namespace MBur.Collections.LockFree_v1/*c*/
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -35,18 +35,20 @@ namespace MBur.Collections.LockFree_v1
 
         // The default value that is used if the user has not specified a capacity.
         private const int DEFAULT_CAPACITY = 127;
-        // The multiplier is used when expanding the array.
-        private const int GROW_MULTIPLIER = 2;
-        // The number by which the multiplier increases in an unsuccessful attempt.
-        private const int GROW_MULTIPLIER_STEP = 1;
         // The default array size of counts
         private const int COUNTS_SIZE = 16;
+        // The size for first segments
+        private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
+        // The number of operations through which the page will be allowed to be used again.
+        private const int WRITER_DELAY = 4096;//1024
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
         private HashTableData _data;
         // Initial table size
         private readonly int _capacity;
+        // Prime numbers for sizes after growing table
+        private int[] _primeSizes;
         // To compare keys
         private readonly IEqualityComparer<TKey> _keysComparer;
         // To compare values
@@ -194,15 +196,18 @@ namespace MBur.Collections.LockFree_v1
             }
 
             // save capacity value for Clear() method
-            _capacity = capacity;
-            _keysComparer = keysComparer ?? EqualityComparer<TKey>.Default;
+            _capacity       = capacity;
+            _keysComparer   = keysComparer ?? EqualityComparer<TKey>.Default;
             _valuesComparer = valuesComparer;
-            _data = new HashTableData(capacity, COUNTS_SIZE);
+            _data           = new HashTableData(capacity, COUNTS_SIZE);
 
-            // Counts initialization
-            for (var i = 0; i < _data.Counts.Length; ++i)
+            if (capacity == DEFAULT_CAPACITY)
             {
-                _data.Counts[i] = new ConcurrentDictionaryCounter();
+                _primeSizes = DefaultPrimeSizes;
+            }
+            else
+            {
+                _primeSizes = GetPrimeSizes(capacity);
             }
         }
 
@@ -391,11 +396,6 @@ namespace MBur.Collections.LockFree_v1
             }
             set
             {
-                if (key == null)
-                {
-                    ThrowKeyNullException();
-                }
-
                 AddOrUpdate(key, value, value);
             }
         }
@@ -416,42 +416,35 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var comp = _keysComparer;
-            var frame = _data.Frame;
-            var index = (comp.GetHashCode(key) & 0x7fffffff) % frame.HashMaster;
-            var sync = frame.SyncTable[index];
-
-            // return if empty
-            if (sync == (int)RecordStatus.Empty)
+            unchecked
             {
+                var data  = _data;
+                var comp  = _keysComparer;
+                var frame = data.Frame;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var index = hash % frame.HashMaster;
+                var sync  = frame.SyncTable[index];
+
+                while (sync == (int)RecordStatus.Grown)
+                {
+                    frame = frame.Next;
+                    index = hash % frame.HashMaster;
+                    sync  = frame.SyncTable[index];
+                }
+
+                ref var bucket  = ref frame.Buckets[index];
+
+                if (
+                        (sync & (int)RecordStatus.HasValue) != 0
+                                    &&
+                        comp.Equals(key, bucket.Key)
+                   )
+                {
+                    return true;
+                }
+
                 return false;
             }
-
-            var keys = frame.KeysTable[index];
-
-            // check exist
-            if (
-                    (sync & (int)RecordStatus.HasValue0) != 0
-                                    &&
-                    comp.Equals(key, keys.Key0)
-                                    ||
-                    (sync & (int)RecordStatus.HasValue1) != 0
-                                    &&
-                    comp.Equals(key, keys.Key1)
-                                    ||
-                    (sync & (int)RecordStatus.HasValue2) != 0
-                                    &&
-                    comp.Equals(key, keys.Key2)
-                                    ||
-                    (sync & (int)RecordStatus.HasValue3) != 0
-                                    &&
-                    comp.Equals(key, keys.Key3)
-                )
-            {
-                return true;
-            }
-
-            return false;
         }
 
         /// <summary>
@@ -477,96 +470,57 @@ namespace MBur.Collections.LockFree_v1
             unchecked
             {
                 var data  = _data;
-                var frame = data.Frame;
                 var comp  = _keysComparer;
+                var frame = data.Frame;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
 
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
+                    var syncs = frame.SyncTable;
                     var sync  = syncs[index];
 
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        sync  = frame.SyncTable[index];
+                    }
+
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.Readind)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
+                    ref var bucket = ref frame.Buckets[index];
+
+                    // check exist
                     if (
-                            (sync & (int)RecordStatus.Read) != 0
-                                        ||
-                            sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Read, sync)
-                        )
+                            (sync & (int)RecordStatus.HasValue) != 0
+                                        &&
+                            comp.Equals(key, bucket.Key)
+                       )
                     {
-                        try
+                        if (sync == (int)RecordStatus.Readind)
                         {
-                            var keys = frame.KeysTable[index];
-                            var vals = frame.ValuesTable[index];
+                            value = bucket.Value;
 
-                            // return if empty
-                            if (sync == (int)RecordStatus.Empty)
-                            {
-                                value = default;
-
-                                return false;
-                            }
-
-                            // check cell 0
-                            if (
-                                    (sync & (int)RecordStatus.HasValue0) != 0
-                                                &&
-                                    comp.Equals(key, keys.Key0)
-                               )
-                            {
-                                value = vals.Value0;
-
-                                return true;
-                            }
-
-                            // check cell 1
-                            if (
-                                    (sync & (int)RecordStatus.HasValue1) != 0
-                                                &&
-                                    comp.Equals(key, keys.Key1)
-                               )
-                            {
-                                value = vals.Value1;
-
-                                return true;
-                            }
-
-                            // check cell 2
-                            if (
-                                    (sync & (int)RecordStatus.HasValue2) != 0
-                                                &&
-                                    comp.Equals(key, keys.Key2)
-                               )
-                            {
-                                value = vals.Value2;
-
-                                return true;
-                            }
-
-                            // check cell 3
-                            if (
-                                    (sync & (int)RecordStatus.HasValue3) != 0
-                                                &&
-                                    comp.Equals(key, keys.Key3)
-                               )
-                            {
-                                value = vals.Value3;
-
-                                return true;
-                            }
+                            return true;
                         }
-                        finally
+                        else if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
                         {
-                            syncs[index] = sync;
-                        }
+                            value = bucket.Value;
 
+                            frame.SyncTable[index] = sync;
+
+                            return true;
+                        }
+                    }
+                    else
+                    {
                         // not exist
                         value = default;
 
@@ -603,139 +557,46 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        var flag = sync | (int)RecordStatus.Adding;
-
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // check exist
-                                    if (
-                                            (sync & (int)RecordStatus.HasValue1) != 0
-                                                            &&
-                                            comp.Equals(key, keys.Key1)
-                                                            ||
-                                            (sync & (int)RecordStatus.HasValue2) != 0
-                                                            &&
-                                            comp.Equals(key, keys.Key2)
-                                                            ||
-                                            (sync & (int)RecordStatus.HasValue3) != 0
-                                                            &&
-                                            comp.Equals(key, keys.Key3)
-                                        )
-                                    {
-                                        syncs[index] = sync;
-
-                                        return false;
-                                    }
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // check exist
-                                    if (
-                                            comp.Equals(key, keys.Key0)
-                                                        ||
-                                            (sync & (int)RecordStatus.HasValue2) != 0
-                                                        &&
-                                            comp.Equals(key, keys.Key2)
-                                                        ||
-                                            (sync & (int)RecordStatus.HasValue3) != 0
-                                                        &&
-                                            comp.Equals(key, keys.Key3)
-                                        )
-                                    {
-                                        syncs[index] = sync;
-
-                                        return false;
-                                    }
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // check exist
-                                    if (
-                                            comp.Equals(key, keys.Key0)
-                                                        ||
-                                            comp.Equals(key, keys.Key1)
-                                                        ||
-                                            (sync & (int)RecordStatus.HasValue3) != 0
-                                                        &&
-                                            comp.Equals(key, keys.Key3)
-                                        )
-                                    {
-                                        syncs[index] = sync;
-
-                                        return false;
-                                    }
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // check exist
-                                    if (
-                                            comp.Equals(key, keys.Key0)
-                                                        ||
-                                            comp.Equals(key, keys.Key1)
-                                                        ||
-                                            comp.Equals(key, keys.Key2)
-                                        )
-                                    {
-                                        syncs[index] = sync;
-
-                                        return false;
-                                    }
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -752,23 +613,15 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var keys = keyst[index];
+                        ref var bucket = ref frame.Buckets[index];
 
                         // check exist
-                        if (
-                                comp.Equals(key, keys.Key0)
-                                            ||
-                                comp.Equals(key, keys.Key1)
-                                            ||
-                                comp.Equals(key, keys.Key2)
-                                            ||
-                                comp.Equals(key, keys.Key3)
-                            )
+                        if (comp.Equals(key, bucket.Key))
                         {
                             return false;
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -801,18 +654,26 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(item), SR.ConcurrentDictionary_ItemKeyIsNull);
             }
 
-            var data  = _data;
-            var frame = data.Frame;
-            var comp  = _keysComparer;
-            var hash  = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
+                    var syncs = frame.SyncTable;
                     var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
@@ -821,97 +682,39 @@ namespace MBur.Collections.LockFree_v1
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals  = frame.ValuesTable;
-                    var flag  = sync | (int)RecordStatus.Removing;
+                    ref var bucket = ref frame.Buckets[index];
+
+                    // check
+                    if (!comp.Equals(key, bucket.Key) || !_valuesComparer.Equals(val, bucket.Value))
+                    {
+                        return false;
+                    }
 
                     // try to get lock
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                    if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Removing, sync) == sync)
                     {
                         try
                         {
-                            var keys = keyst[index];
+                            bucket = new Bucket();
 
-                            // check cell 0
-                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, keys.Key0))
-                            {
-                                if (_valuesComparer.Equals(val, vals[index].Value0))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue0;
-
-                                    keyst[index].Key0  = default;
-                                    vals[index].Value0 = default;
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // check cell 1
-                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                            {
-                                if (_valuesComparer.Equals(val, vals[index].Value1))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue1;
-
-                                    keyst[index].Key1  = default;
-                                    vals[index].Value1 = default;
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // check cell 2
-                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                            {
-                                if (_valuesComparer.Equals(val, vals[index].Value2))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue2;
-
-                                    keyst[index].Key2  = default;
-                                    vals[index].Value2 = default;
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // check cell 3
-                            else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                            {
-                                if (_valuesComparer.Equals(val, vals[index].Value3))
-                                {
-                                    sync ^= (int)RecordStatus.HasValue3;
-                                    
-                                    keyst[index].Key3  = default;
-                                    vals[index].Value3 = default;
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-                            // key not exist
-                            else
-                            {
-                                return false;
-                            }
+                            syncs[index] = (int)RecordStatus.Empty;
 
                             DecrementCount(data);
 
                             return true;
                         }
-                        finally
+                        catch
                         {
                             syncs[index] = sync;
+
+                            throw;
                         }
                     }
 
@@ -939,18 +742,26 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var data  = _data;
-            var frame = data.Frame;
-            var comp  = _keysComparer;
-            var hash  = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
+                    var syncs = frame.SyncTable;
                     var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // return if empty
                     if (sync == (int)RecordStatus.Empty)
@@ -961,79 +772,41 @@ namespace MBur.Collections.LockFree_v1
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals  = frame.ValuesTable;
-                    var flag  = sync | (int)RecordStatus.Removing;
+                    ref var bucket = ref frame.Buckets[index];
+
+                    // check
+                    if (!comp.Equals(key, bucket.Key))
+                    {
+                        value = default;
+
+                        return false;
+                    }
 
                     // try to get lock
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                    if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Removing, sync) == sync)
                     {
                         try
                         {
-                            var keys = keyst[index];
+                            value = bucket.Value;
 
-                            // check cell 0
-                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, keys.Key0))
-                            {
-                                sync ^= (int)RecordStatus.HasValue0;
-
-                                value = vals[index].Value0;
-
-                                keyst[index].Key0  = default;
-                                vals[index].Value0 = default;
-                            }
-                            // check cell 1
-                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                            {
-                                sync ^= (int)RecordStatus.HasValue1;
-
-                                value = vals[index].Value1;
-
-                                keyst[index].Key1  = default;
-                                vals[index].Value1 = default;
-                            }
-                            // check cell 2
-                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                            {
-                                sync ^= (int)RecordStatus.HasValue2;
-
-                                value = vals[index].Value2;
-
-                                keyst[index].Key2  = default;
-                                vals[index].Value2 = default;
-                            }
-                            // check cell 3
-                            else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                            {
-                                sync ^= (int)RecordStatus.HasValue3;
-
-                                value = vals[index].Value3;
-
-                                keyst[index].Key3  = default;
-                                vals[index].Value3 = default;
-                            }
-                            // key not exist
-                            else
-                            {
-                                value = default;
-
-                                return false;
-                            }
+                            syncs[index] = (int)RecordStatus.Empty;
 
                             DecrementCount(data);
 
                             return true;
                         }
-                        finally
+                        catch
                         {
                             syncs[index] = sync;
+
+                            throw;
                         }
                     }
 
@@ -1064,98 +837,61 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
 
-                    // return if empty
-                    if (sync == (int)RecordStatus.Empty)
+                    while (sync == (int)RecordStatus.Grown)
                     {
-                        return false;
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-                    var flag = sync | (int)RecordStatus.Updating;
+                    ref var bucket = ref frame.Buckets[index];
+
+                    // check exist
+                    if (
+                            (sync & (int)RecordStatus.HasValue) == 0 
+                                            || 
+                            !comp.Equals(key, bucket.Key)
+                                            ||
+                            !_valuesComparer.Equals(bucket.Value, comparisonValue)
+                       )
+                    {
+                        return false;
+                    }
 
                     // try to get lock
-                    if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                    if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                     {
                         try
                         {
-                            var keys = keyst[index];
+                            frame.Buckets[index] = new Bucket { Key = key, Value = newValue };
 
-                            // check cell 0
-                            if ((sync & (int)RecordStatus.HasValue0) != 0 && comp.Equals(key, keys.Key0))
-                            {
-                                if (_valuesComparer.Equals(vals[index].Value0, comparisonValue))
-                                {
-                                    vals[index].Value0 = newValue;
-                                    syncs[index] = sync;
-
-                                    return true;
-                                }
-                            }
-                            // check cell 1
-                            else if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                            {
-                                if (_valuesComparer.Equals(vals[index].Value1, comparisonValue))
-                                {
-                                    vals[index].Value1 = newValue;
-                                    syncs[index] = sync;
-
-                                    return true;
-                                }
-                            }
-                            // check cell 2
-                            else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                            {
-                                if (_valuesComparer.Equals(vals[index].Value2, comparisonValue))
-                                {
-                                    vals[index].Value2 = newValue;
-                                    syncs[index] = sync;
-
-                                    return true;
-                                }
-                            }
-                            // check cell 3
-                            else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                            {
-                                if (_valuesComparer.Equals(vals[index].Value3, comparisonValue))
-                                {
-                                    vals[index].Value3 = newValue;
-                                    syncs[index] = sync;
-
-                                    return true;
-                                }
-                            }
-
-                            syncs[index] = sync;
-
-                            return false;
+                            return true;
                         }
-                        catch
+                        finally
                         {
                             syncs[index] = sync;
-
-                            throw;
                         }
                     }
 
@@ -1183,183 +919,46 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        var flag = sync | (int)RecordStatus.Adding;
-
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // get from cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1376,31 +975,30 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var cache = vals[index];
-                        var keys = keyst[index];
+                        ref var bucket = ref frame.Buckets[index];
 
-                        // get from cell 0
-                        if (comp.Equals(key, keys.Key0))
+                        // check exist
+                        if (comp.Equals(key, bucket.Key))
                         {
-                            return cache.Value0;
-                        }
-                        // get from cell 1
-                        else if (comp.Equals(key, keys.Key1))
-                        {
-                            return cache.Value1;
-                        }
-                        // get from cell 2
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            return cache.Value2;
-                        }
-                        // get from cell 3
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            return cache.Value3;
+                            if (sync == (int)RecordStatus.Readind)
+                            {
+                                return bucket.Value;
+                            }
+
+                            if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
+                            {
+                                try
+                                {
+                                    return bucket.Value;
+                                }
+                                finally
+                                {
+                                    frame.SyncTable[index] = sync;
+                                }
+                            }
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -1435,192 +1033,48 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(valueFactory));
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        TValue value;
-                        var flag = sync | (int)RecordStatus.Adding;
-
-                        // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        // adding
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                var value = valueFactory(key);
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // get from cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
+                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key);
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key);
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key);
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key);
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1637,31 +1091,30 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var cache = vals[index];
-                        var keys = keyst[index];
+                        ref var bucket = ref frame.Buckets[index];
 
-                        // get from cell 0
-                        if (comp.Equals(key, keys.Key0))
+                        // check exist
+                        if (comp.Equals(key, bucket.Key))
                         {
-                            return cache.Value0;
-                        }
-                        // get from cell 1
-                        else if (comp.Equals(key, keys.Key1))
-                        {
-                            return cache.Value1;
-                        }
-                        // get from cell 2
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            return cache.Value2;
-                        }
-                        // get from cell 3
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            return cache.Value3;
+                            if (sync == (int)RecordStatus.Readind)
+                            {
+                                return bucket.Value;
+                            }
+
+                            if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
+                            {
+                                try
+                                {
+                                    return bucket.Value;
+                                }
+                                finally
+                                {
+                                    frame.SyncTable[index] = sync;
+                                }
+                            }
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -1697,192 +1150,48 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(valueFactory));
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        TValue value;
-                        var flag = sync | (int)RecordStatus.Adding;
-
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                var value = valueFactory(key, factoryArgument);
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // get from cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
+                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key, factoryArgument);
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key, factoryArgument);
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var tmp = vals[index].Value3;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key, factoryArgument);
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // get from cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var tmp = vals[index].Value0;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var tmp = vals[index].Value1;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-                                    // get from cell 2
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        var tmp = vals[index].Value2;
-
-                                        syncs[index] = sync;
-
-                                        return tmp;
-                                    }
-
-                                    value = valueFactory(key, factoryArgument);
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = value;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -1899,31 +1208,30 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var cache = vals[index];
-                        var keys = keyst[index];
+                        ref var bucket = ref frame.Buckets[index];
 
-                        // get from cell 0
-                        if (comp.Equals(key, keys.Key0))
+                        // check exist
+                        if (comp.Equals(key, bucket.Key))
                         {
-                            return cache.Value0;
-                        }
-                        // get from cell 1
-                        else if (comp.Equals(key, keys.Key1))
-                        {
-                            return cache.Value1;
-                        }
-                        // get from cell 2
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            return cache.Value2;
-                        }
-                        // get from cell 3
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            return cache.Value3;
+                            if (sync == (int)RecordStatus.Readind)
+                            {
+                                return bucket.Value;
+                            }
+
+                            if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
+                            {
+                                try
+                                {
+                                    return bucket.Value;
+                                }
+                                finally
+                                {
+                                    frame.SyncTable[index] = sync;
+                                }
+                            }
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -1968,209 +1276,53 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(updateValueFactory));
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    // add mode
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        TValue addValue;
-
-                        var flag = sync | (int)RecordStatus.Adding;
-
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                var value = addValueFactory(key, factoryArgument);
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // update cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1, factoryArgument);
+                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2, factoryArgument);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3, factoryArgument);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key, factoryArgument);
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0, factoryArgument);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2, factoryArgument);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3, factoryArgument);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key, factoryArgument);
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0, factoryArgument);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1, factoryArgument);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3, factoryArgument);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key, factoryArgument);
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0, factoryArgument);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1, factoryArgument);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2, factoryArgument);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key, factoryArgument);
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
-                                return addValue;
+                                return value;
                             }
                             catch
                             {
@@ -2183,111 +1335,38 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var keys = keyst[index];
-
-                        // check exist
-                        if (comp.Equals(key, keys.Key0))
+                        // update mode
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                            try
                             {
-                                // update cell 0
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value0, factoryArgument);
+                                var link = frame.Buckets[index];
+                                ref var bucket = ref frame.Buckets[index];
 
-                                    vals[index].Value0 = value;
+                                // check exist
+                                if (comp.Equals(key, bucket.Key))
+                                {
+
+                                    var value = updateValueFactory(key, bucket.Value, factoryArgument);
+
+                                    frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
                                     return value;
                                 }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
                             }
-                            else
+                            finally
                             {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
+                                syncs[index] = sync;
+                            } 
                         }
-                        else if (comp.Equals(key, keys.Key1))
+                        else
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 1
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value1, factoryArgument);
+                            frame = Volatile.Read(ref data.Frame);
 
-                                    vals[index].Value1 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 2
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value2, factoryArgument);
-
-                                    vals[index].Value2 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 3
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value3, factoryArgument);
-
-                                    vals[index].Value3 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
+                            continue;
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -2331,208 +1410,52 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(updateValueFactory));
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        var flag = sync | (int)RecordStatus.Adding;
-                        TValue addValue;
-
                         // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                var value = addValueFactory(key);
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // update cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1);
+                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key);
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key);
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key);
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    addValue = addValueFactory(key);
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
-                                return addValue;
+                                return value;
                             }
                             catch
                             {
@@ -2545,111 +1468,36 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var keys = keyst[index];
-
-                        // check exist
-                        if (comp.Equals(key, keys.Key0))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                            try
                             {
-                                // update cell 0
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value0);
+                                var link = frame.Buckets[index];
+                                ref var bucket = ref frame.Buckets[index];
 
-                                    vals[index].Value0 = value;
+                                // check exist
+                                if (comp.Equals(key, bucket.Key))
+                                {
+                                    var value = updateValueFactory(key, bucket.Value);
+
+                                    frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
                                     return value;
                                 }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
                             }
-                            else
+                            finally
                             {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
+                                syncs[index] = sync;
                             }
                         }
-                        else if (comp.Equals(key, keys.Key1))
+                        else
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 1
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value1);
+                            frame = Volatile.Read(ref data.Frame);
 
-                                    vals[index].Value1 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 2
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value2);
-
-                                    vals[index].Value2 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 3
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value3);
-
-                                    vals[index].Value3 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
+                            continue;
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -2686,195 +1534,46 @@ namespace MBur.Collections.LockFree_v1
                 throw new ArgumentNullException(nameof(updateValueFactory));
             }
 
-            var data = _data;
-            var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
-
             unchecked
             {
+                var data  = _data;
+                var frame = data.Frame;
+                var comp  = _keysComparer;
+                var hash  = comp.GetHashCode(key) & 0x7fffffff;
+
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    // add mode
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        var flag = sync | (int)RecordStatus.Adding;
-
-                        // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                frame.Buckets[index] = new Bucket { Key = key, Value = addValue };
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // update cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value3);
-
-                                        vals[index].Value3 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value0);
-
-                                        vals[index].Value0 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value1);
-
-                                        vals[index].Value1 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-                                    // update cell 2
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        var value = updateValueFactory(key, vals[index].Value2);
-
-                                        vals[index].Value2 = value;
-                                        syncs[index] = sync;
-
-                                        return value;
-                                    }
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -2891,111 +1590,37 @@ namespace MBur.Collections.LockFree_v1
                     // growing
                     else
                     {
-                        var keys = keyst[index];
-
-                        // check exist
-                        if (comp.Equals(key, keys.Key0))
+                        // update mode
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                            try
                             {
-                                // update cell 0
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value0);
+                                var link = frame.Buckets[index];
+                                ref var bucket = ref frame.Buckets[index];
 
-                                    vals[index].Value0 = value;
+                                // check exist
+                                if (comp.Equals(key, bucket.Key))
+                                {
+                                    var value = updateValueFactory(key, bucket.Value);
+
+                                    frame.Buckets[index] = new Bucket { Key = key, Value = value };
 
                                     return value;
                                 }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
                             }
-                            else
+                            finally
                             {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
+                                syncs[index] = sync;
                             }
                         }
-                        else if (comp.Equals(key, keys.Key1))
+                        else
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 1
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value1);
+                            frame = Volatile.Read(ref data.Frame);
 
-                                    vals[index].Value1 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 2
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value2);
-
-                                    vals[index].Value2 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 3
-                                try
-                                {
-                                    var value = updateValueFactory(key, vals[index].Value3);
-
-                                    vals[index].Value3 = value;
-
-                                    return value;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
+                            continue;
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -3024,171 +1649,46 @@ namespace MBur.Collections.LockFree_v1
                 ThrowKeyNullException();
             }
 
-            var data = _data;
+            var data  = _data;
             var frame = data.Frame;
-            var comp = _keysComparer;
-            var hash = comp.GetHashCode(key) & 0x7fffffff;
+            var comp  = _keysComparer;
+            var hash  = comp.GetHashCode(key) & 0x7fffffff;
 
             unchecked
             {
                 // search empty space
                 while (true)
                 {
-                    var syncs = frame.SyncTable;
                     var index = hash % frame.HashMaster;
-                    var sync = syncs[index];
+                    var syncs = frame.SyncTable;
+                    var sync  = syncs[index];
+
+                    while (sync == (int)RecordStatus.Grown)
+                    {
+                        frame = frame.Next;
+                        index = hash % frame.HashMaster;
+                        syncs = frame.SyncTable;
+                        sync  = syncs[index];
+                    }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
                         continue;
                     }
 
-                    var keyst = frame.KeysTable;
-                    var vals = frame.ValuesTable;
-
-                    // Check that there is at least one free space
-                    if ((sync & (int)RecordStatus.Full) != (int)RecordStatus.Full)
+                    // adding mode
+                    if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        var flag = sync | (int)RecordStatus.Adding;
-
-                        // try to get lock
-                        if (sync == Interlocked.CompareExchange(ref syncs[index], flag, sync))
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
-                                var keys = keyst[index];
+                                frame.Buckets[index] = new Bucket { Key = key, Value = addValue };
 
-                                // add to cell 0
-                                if ((sync & (int)RecordStatus.HasValue0) == 0)
-                                {
-                                    // update cell 1
-                                    if ((sync & (int)RecordStatus.HasValue1) != 0 && comp.Equals(key, keys.Key1))
-                                    {
-                                        vals[index].Value1 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        vals[index].Value2 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        vals[index].Value3 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    keyst[index].Key0 = key;
-                                    vals[index].Value0 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue0;
-                                }
-                                // add to cell 1
-                                else if ((sync & (int)RecordStatus.HasValue1) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        vals[index].Value0 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 2
-                                    else if ((sync & (int)RecordStatus.HasValue2) != 0 && comp.Equals(key, keys.Key2))
-                                    {
-                                        vals[index].Value2 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        vals[index].Value3 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    keyst[index].Key1 = key;
-                                    vals[index].Value1 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue1;
-                                }
-                                // add to cell 2
-                                else if ((sync & (int)RecordStatus.HasValue2) == 0)
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        vals[index].Value0 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        vals[index].Value1 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 3
-                                    else if ((sync & (int)RecordStatus.HasValue3) != 0 && comp.Equals(key, keys.Key3))
-                                    {
-                                        vals[index].Value3 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    keyst[index].Key2 = key;
-                                    vals[index].Value2 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue2;
-                                }
-                                // add to cell 3
-                                else
-                                {
-                                    // update cell 0
-                                    if (comp.Equals(key, keys.Key0))
-                                    {
-                                        vals[index].Value0 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 1
-                                    else if (comp.Equals(key, keys.Key1))
-                                    {
-                                        vals[index].Value1 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-                                    // update cell 2
-                                    else if (comp.Equals(key, keys.Key2))
-                                    {
-                                        vals[index].Value2 = updateValue;
-                                        syncs[index] = sync;
-
-                                        return updateValue;
-                                    }
-
-                                    keyst[index].Key3 = key;
-                                    vals[index].Value3 = addValue;
-                                    syncs[index] = sync | (int)RecordStatus.HasValue3;
-                                }
+                                syncs[index] = (int)RecordStatus.HasValue;
 
                                 IncrementCount(data);
 
@@ -3202,106 +1702,36 @@ namespace MBur.Collections.LockFree_v1
                             }
                         }
                     }
-                    // growing
                     else
                     {
-                        var keys = keyst[index];
-
-                        // check exist
-                        if (comp.Equals(key, keys.Key0))
+                        // update mode
+                        if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync) == sync)
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
+                            try
                             {
-                                // update cell 0
-                                try
+                                var link = frame.Buckets[index];
+                                ref var bucket = ref frame.Buckets[index];
+
+                                if (comp.Equals(key, bucket.Key))
                                 {
-                                    vals[index].Value0 = updateValue;
+                                    frame.Buckets[index] = new Bucket { Key = key, Value = updateValue };
 
                                     return updateValue;
                                 }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
                             }
-                            else
+                            finally
                             {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
+                                syncs[index] = sync;
                             }
                         }
-                        else if (comp.Equals(key, keys.Key1))
+                        else
                         {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 1
-                                try
-                                {
-                                    vals[index].Value1 = updateValue;
+                            frame = Volatile.Read(ref data.Frame);
 
-                                    return updateValue;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key2))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 2
-                                try
-                                {
-                                    vals[index].Value2 = updateValue;
-
-                                    return updateValue;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
-                        }
-                        else if (comp.Equals(key, keys.Key3))
-                        {
-                            if (sync == Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Updating, sync))
-                            {
-                                // update cell 3
-                                try
-                                {
-                                    vals[index].Value3 = updateValue;
-
-                                    return updateValue;
-                                }
-                                finally
-                                {
-                                    syncs[index] = sync;
-                                }
-                            }
-                            else
-                            {
-                                frame = Volatile.Read(ref data.Frame);
-
-                                continue;
-                            }
+                            continue;
                         }
 
-                        GrowTable(data, hash);
+                        GrowTable(data);
                     }
 
                     frame = Volatile.Read(ref data.Frame);
@@ -3395,216 +1825,142 @@ namespace MBur.Collections.LockFree_v1
 
         #region ' Private Area '
 
-        // Expand table function
-        private void GrowTable(HashTableData data, int hash)
+        // Expand table
+        private void GrowTable(HashTableData data)
         {
-            var len = data.Frame.HashMaster;
+            if (data.SyncGrowing > 0)
+            {
+                return;
+            }
 
             // get growing lock
-            while (Interlocked.CompareExchange(ref data.SyncGrowing, 1, 0) != 0)
+            if (Interlocked.CompareExchange(ref data.SyncGrowing, 1, 0) != 0)
             {
-                while (Volatile.Read(ref data.SyncGrowing) != 0)
-                {
-                    Thread.Yield();
-                }
-
-                if (len != Volatile.Read(ref data.Frame).HashMaster)
-                {
-                    return;
-                }
+                return;
             }
 
             unchecked
             {
-                int sync;
-                // This assignment is necessary to calm the compiler.
-                // In fact, this variable is initialized anyway.
-                // HashTableData new_data;
-                var new_data = new HashTableDataFrame(0);
-                var cur_data = data.Frame;
-                var repeat = true;
-                var mul = GROW_MULTIPLIER;
-                var new_master = cur_data.HashMaster;
+                try
+                { 
+                    var comp    = _keysComparer;
+                    var frame   = data.Frame;
 
-                while (repeat)
-                {
-                    if (new_master == int.MaxValue)
+                    if (data.CurrentSize == _primeSizes.Length)
                     {
-                        data.SyncGrowing = 0;
-
                         throw new OverflowException();
                     }
 
-                    new_master = cur_data.HashMaster * mul + 1;
+                    Volatile.Write(ref frame.Next, new HashTableDataFrame(_primeSizes[data.CurrentSize++]));
 
-                    if (new_master < 0 || new_master <= cur_data.HashMaster)
+                    while (frame.Next != null)
                     {
-                        new_master = int.MaxValue;
-                    }
-
-                    repeat = false;
-                    new_data = new HashTableDataFrame(new_master);
-
-                    for (var i = 0; i < cur_data.HashMaster; ++i)
-                    {
-                        Thread.MemoryBarrier();
-
-                        sync = cur_data.SyncTable[i];
-
-                        var flag = sync | (int)RecordStatus.Growing;
-
-                        // set a bucket lock
-                        if (
-                               (sync & (int)RecordStatus.Growing) != 0
-                                                ||
-                                sync <= (int)RecordStatus.Full
-                                                &&
-                                sync == Interlocked.CompareExchange(ref cur_data.SyncTable[i], flag, sync)
-                           )
+                        for (var i = 0; i < frame.HashMaster; ++i)
                         {
-                            if ((sync & (int)RecordStatus.HasValue0) != 0)
+                            var sync = Volatile.Read(ref frame.SyncTable[i]);
+
+                            // skip
+                            if (sync == (int)RecordStatus.Grown)
                             {
-                                var key = cur_data.KeysTable[i].Key0;
-                                var val = cur_data.ValuesTable[i].Value0;
-
-                                if (!GrowingAdd(new_data, key, val))
-                                {
-                                    repeat = true;
-
-                                    break;
-                                }
+                                continue;
                             }
 
-                            if ((sync & (int)RecordStatus.HasValue1) != 0)
+                            // set a bucket lock
+                            if (
+                                    sync <= (int)RecordStatus.HasValue
+                                                    &&
+                                    Interlocked.CompareExchange(ref frame.SyncTable[i], sync | (int)RecordStatus.Growing, sync) == sync
+                               )
                             {
-                                var key = cur_data.KeysTable[i].Key1;
-                                var val = cur_data.ValuesTable[i].Value1;
-
-                                if (!GrowingAdd(new_data, key, val))
+                                if ((sync & (int)RecordStatus.HasValue) != 0)
                                 {
-                                    repeat = true;
-
-                                    break;
+                                    InsertGrowingBucket(data, frame.Next, ref frame.Buckets[i]);
                                 }
+
+                                // unlock
+                                frame.SyncTable[i] = (int)RecordStatus.Grown;
                             }
-
-                            if ((sync & (int)RecordStatus.HasValue2) != 0)
+                            // wait another thread complate oparation
+                            else
                             {
-                                var key = cur_data.KeysTable[i].Key2;
-                                var val = cur_data.ValuesTable[i].Value2;
-
-                                if (!GrowingAdd(new_data, key, val))
-                                {
-                                    repeat = true;
-
-                                    break;
-                                }
-                            }
-
-                            if ((sync & (int)RecordStatus.HasValue3) != 0)
-                            {
-                                var key = cur_data.KeysTable[i].Key3;
-                                var val = cur_data.ValuesTable[i].Value3;
-
-                                if (!GrowingAdd(new_data, key, val))
-                                {
-                                    repeat = true;
-
-                                    break;
-                                }
+                                i--;
                             }
                         }
-                        // wait another thread complate oparation
-                        else
-                        {
-                            i--;
 
-                            Thread.Yield();
-                        }
+                        frame = frame.Next;
+
+                        // write new data frame
+                        Volatile.Write(ref data.Frame, frame);
                     }
 
-                    if (!repeat)
-                    {
-                        // check new value
-                        var new_index = hash % new_master;
-
-                        sync = new_data.SyncTable[new_index];
-
-                        // check at least one empty space
-                        if ((sync & (int)RecordStatus.Full) == (int)RecordStatus.Full)
-                        {
-                            repeat = true;
-                        }
-                    }
-
-                    mul += GROW_MULTIPLIER_STEP;
+                    // unlock growing
+                    data.SyncGrowing = 0;
                 }
+                catch
+                {
+                    data.SyncGrowing = 0;
 
-                // write new data frame
-                data.Frame = new_data;
-
-                // unlock growing
-                data.SyncGrowing = 0;
+                    throw;
+                }
             }
         }
 
-        // Add on growing
-        private bool GrowingAdd(HashTableDataFrame data, TKey key, TValue val)
+        // 
+        private void InsertGrowingBucket(HashTableData data, HashTableDataFrame frame, ref Bucket bucket)
         {
-            var comp = _keysComparer;
-            int index = (comp.GetHashCode(key) & 0x7fffffff) % data.HashMaster;
-            int sync = data.SyncTable[index];
+            var comp  = _keysComparer;
+            var hash  = comp.GetHashCode(bucket.Key) & 0x7fffffff;
+            var index = hash % frame.HashMaster;
+            var sync  = frame.SyncTable[index];
 
-            if ((sync & (int)RecordStatus.HasValue0) == 0)
+            if (sync == (int)RecordStatus.Grown)
             {
-                data.KeysTable[index].Key0 = key;
-                data.ValuesTable[index].Value0 = val;
-                data.SyncTable[index] = sync | (int)RecordStatus.HasValue0;
+                InsertGrowingBucket(data, frame.Next, ref bucket);
 
-                return true;
-            }
-            else if ((sync & (int)RecordStatus.HasValue1) == 0)
-            {
-                data.KeysTable[index].Key1 = key;
-                data.ValuesTable[index].Value1 = val;
-                data.SyncTable[index] = sync | (int)RecordStatus.HasValue1;
-
-                return true;
-            }
-            else if ((sync & (int)RecordStatus.HasValue2) == 0)
-            {
-                data.KeysTable[index].Key2 = key;
-                data.ValuesTable[index].Value2 = val;
-                data.SyncTable[index] = sync | (int)RecordStatus.HasValue2;
-
-                return true;
-            }
-            else if ((sync & (int)RecordStatus.HasValue3) == 0)
-            {
-                data.KeysTable[index].Key3 = key;
-                data.ValuesTable[index].Value3 = val;
-                data.SyncTable[index] = sync | (int)RecordStatus.HasValue3;
-
-                return true;
+                return;
             }
 
-            return false;
-        }
-
-        // Constructor initialization
-        private void InitializeFromCollection(IEnumerable<KeyValuePair<TKey, TValue>> collection)
-        {
-            foreach (KeyValuePair<TKey, TValue> pair in collection)
+            // lock
+            while (true)
             {
-                if (pair.Key == null)
+                if (
+                        sync <= (int)RecordStatus.HasValue
+                                        &&
+                        Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Growing, sync) == sync
+                    )
                 {
-                    ThrowKeyNullException();
+                    break;
                 }
 
-                if (!TryAdd(pair.Key, pair.Value))
+                sync = Volatile.Read(ref frame.SyncTable[index]);
+            }
+
+            // In case of collision detection, it is necessary to create another layer of growing-table.
+            if ((sync & (int)RecordStatus.HasValue) != 0)
+            {
+                if (frame.Next == null)
                 {
-                    throw new ArgumentException(SR.ConcurrentDictionary_SourceContainsDuplicateKeys);
+                    if (data.CurrentSize == _primeSizes.Length)
+                    {
+                        throw new OverflowException();
+                    }
+
+                    Volatile.Write(ref frame.Next, new HashTableDataFrame(_primeSizes[data.CurrentSize++]));
                 }
+
+                // set current link
+                InsertGrowingBucket(data, frame.Next, ref bucket);
+
+                // set coolision link
+                InsertGrowingBucket(data, frame.Next, ref frame.Buckets[index]);
+
+                // unlock
+                frame.SyncTable[index] = (int)RecordStatus.Grown;
+            }
+            else
+            {
+                frame.Buckets[index]   = bucket;
+                frame.SyncTable[index] = (int)RecordStatus.HasValue;
             }
         }
 
@@ -4325,37 +2681,14 @@ namespace MBur.Collections.LockFree_v1
         // Warning: When changing, carefully look at the use in more><less conditions.
         private enum RecordStatus
         {
-            Empty     = 000,
-            HasValue0 = 001,
-            HasValue1 = 002,
-            HasValue2 = 004,
-            HasValue3 = 008,
-            Full      = 015,
-            Adding    = 016,
-            Removing  = 032,
-            Updating  = 064,
-            Growing   = 128,
-            Read      = 256,
-        }
-
-        // Bucket of keys for the table
-        [DebuggerDisplay("Key0 = {Key0}, Key1 = {Key1}, Key2 = {Key2}, Key3 = {Key3}")]
-        private struct KeyBucket
-        {
-            public TKey Key0;
-            public TKey Key1;
-            public TKey Key2;
-            public TKey Key3;
-        }
-
-        // Buckets of values for the table
-        [DebuggerDisplay("Value0 = {Value0}, Value1 = {Value1}, Value2 = {Value2}, Value3 = {Value3}")]
-        private struct ValueBucket
-        {
-            public TValue Value0;
-            public TValue Value1;
-            public TValue Value2;
-            public TValue Value3;
+            Empty     = 00,
+            HasValue  = 01,
+            Readind   = 02,
+            Adding    = 04,
+            Removing  = 08,
+            Updating  = 16,
+            Growing   = 32,
+            Grown     = 64
         }
 
         /// <summary>
@@ -4363,12 +2696,18 @@ namespace MBur.Collections.LockFree_v1
         /// data atomically.Since in .Net the link changes atomically, this wrapper
         /// class exists for these purposes.
         /// </summary>
-        private class HashTableData
+        private sealed class HashTableData
         {
-            public HashTableData(int hashMaster, int countsSize)
+            public HashTableData(int hashMaster, int threads)
             {
-                Frame = new HashTableDataFrame(hashMaster);
-                Counts = new ConcurrentDictionaryCounter[countsSize];
+                Frame        = new HashTableDataFrame(hashMaster);
+                Counts       = new ConcurrentDictionaryCounter[threads];
+                CurrentSize  = 0;
+
+                for (var i = 0; i < threads; ++i)
+                {
+                    Counts[i]   = new ConcurrentDictionaryCounter();
+                }
             }
 
             public HashTableData(int hashMaster) : this(hashMaster, 0)
@@ -4381,40 +2720,48 @@ namespace MBur.Collections.LockFree_v1
             // To synchronize threads when expanding the counters array
             public int SyncCounts;
 
-            // Data frame
+            // Current data frame
             public HashTableDataFrame Frame;
 
             // Array of counters
             public ConcurrentDictionaryCounter[] Counts;
+
+            // Current size
+            public int CurrentSize;
         }
 
         /// <summary>
         /// A data frame is always created when a table grows.
         /// </summary>
-        private class HashTableDataFrame
+        private sealed class HashTableDataFrame
         {
             public HashTableDataFrame(int hashMaster)
             {
-                HashMaster = hashMaster;
-                SyncTable = new int[hashMaster];
-                KeysTable = new KeyBucket[hashMaster];
-                ValuesTable = new ValueBucket[hashMaster];
+                HashMaster   = hashMaster;
+                SyncTable    = new int[hashMaster];
+                Buckets      = new Bucket[hashMaster];
+                Next         = null;
             }
 
             // Divider for hash function
             public readonly int HashMaster;
 
             // State array. Used to synchronize threads. See RecordStatus
-            // Other threads make changes only when deleting or updating.
             public readonly int[] SyncTable;
 
-            // Array of keys
-            // Other threads make changes only when deleting.
-            public readonly KeyBucket[] KeysTable;
+            // Array of buckets
+            public Bucket[] Buckets;
 
-            // Array of values
-            // Other threads make changes only when deleting or updating.
-            public readonly ValueBucket[] ValuesTable;
+            //
+            public HashTableDataFrame Next;
+        }
+
+        //
+        [DebuggerDisplay("{Key}/{Value}")]
+        private struct Bucket
+        {
+            public TKey     Key;
+            public TValue   Value;
         }
 
         /// <summary>
@@ -4426,8 +2773,6 @@ namespace MBur.Collections.LockFree_v1
             private readonly ConcurrentDictionary<TKey, TValue> _dictionary;
             // bucket index
             private int _index;
-            // current cell in bucket
-            private int _cell;
 
             // constructor
             public Enumerator(ConcurrentDictionary<TKey, TValue> dictionary)
@@ -4442,15 +2787,15 @@ namespace MBur.Collections.LockFree_v1
             {
                 while (true)
                 {
-                    var data = Volatile.Read(ref _dictionary._data).Frame;
+                    var data  = Volatile.Read(ref _dictionary._data);
+                    var frame = data.Frame;
 
-                    if (_index >= data.HashMaster)
+                    if (_index >= frame.HashMaster)
                     {
                         return false;
                     }
 
-                    var keys = data.KeysTable[_index];
-                    var sync = data.SyncTable[_index];
+                    var sync = frame.SyncTable[_index];
 
                     // skip if empty
                     if (sync == (int)RecordStatus.Empty)
@@ -4461,55 +2806,37 @@ namespace MBur.Collections.LockFree_v1
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Full && sync < (int)RecordStatus.Growing)
+                    if (sync > (int)RecordStatus.Readind)
                     {
                         continue;
                     }
 
-                    // check cell 0
-                    if (_cell < 1 && (sync & (int)RecordStatus.HasValue0) != 0 && _dictionary.TryGetValue(keys.Key0, out TValue val0))
-                    {
-                        _cell = 1;
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key0, val0);
+                    ref var bucket = ref frame.Buckets[_index];
 
-                        return true;
+                    if (sync == (int)RecordStatus.Readind)
+                    {
+                        Current = new KeyValuePair<TKey, TValue>(bucket.Key, bucket.Value);
+                    }
+                    else if (Interlocked.CompareExchange(ref frame.SyncTable[_index], sync | (int)RecordStatus.Readind, sync) == sync)
+                    {
+                        Current = new KeyValuePair<TKey, TValue>(bucket.Key, bucket.Value);
+
+                        frame.SyncTable[_index] = sync;
+                    }
+                    else
+                    {
+                        continue;
                     }
 
-                    // check cell 1
-                    if (_cell < 2 && (sync & (int)RecordStatus.HasValue1) != 0 && _dictionary.TryGetValue(keys.Key1, out TValue val1))
-                    {
-                        _cell = 2;
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key1, val1);
-
-                        return true;
-                    }
-
-                    // check cell 2
-                    if (_cell < 3 && (sync & (int)RecordStatus.HasValue2) != 0 && _dictionary.TryGetValue(keys.Key2, out TValue val2))
-                    {
-                        _cell = 3;
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key2, val2);
-
-                        return true;
-                    }
-
-                    _cell = 0;
                     _index++;
 
-                    // check cell 3
-                    if ((sync & (int)RecordStatus.HasValue3) != 0 && _dictionary.TryGetValue(keys.Key0, out TValue val3))
-                    {
-                        Current = new KeyValuePair<TKey, TValue>(keys.Key3, val3);
-
-                        return true;
-                    }
+                    return true;
                 }
             }
 
             // reset for reuse
             public void Reset()
             {
-                _cell = 0;
                 _index = 0;
                 Current = default;
             }
@@ -4662,9 +2989,89 @@ namespace MBur.Collections.LockFree_v1
             throw new ArgumentException(SR.ConcurrentDictionary_TypeOfValueIncorrect);
         }
 
+        //  default prime numbers for table sizes
+        private static readonly int[] DefaultPrimeSizes = new[]
+        {
+            0000000257, 0000000521, 0000001049, 0000002111, 
+            0000004229, 0000008461, 0000016927, 0000033857, 
+            0000067723, 0000135449, 0000270913, 0000541831, 
+            0001083689, 0002167393, 0004334791, 0008669593,
+            0017339197, 0034678421, 0069356857, 0138713717, 
+            0277427441, 0554854889, 1109709791, 2147483647
+        };
+
+        // generate prime numbers
+        private static int[] GetPrimeSizes(int first)
+        {
+            var pos  = 0;
+            var tmp  = new int[32];
+            var size = (long)first;
+
+            while (size < int.MaxValue)
+            {
+                // search for prime number
+                for (size = size * 2 + 1; size < int.MaxValue; size += 2)
+                {
+                    if (size % 3 == 0)
+                    {
+                        continue;
+                    }
+
+                    for (int j = 5; j * j <= size; j += 6)
+                    {
+                        if (size % j == 0 || size % (j + 2) == 0)
+                        {
+                            goto next;
+                        }
+                    }
+
+                    break;
+                next:;
+                }
+
+                if (size >= int.MaxValue)
+                {
+                    tmp[pos++] = int.MaxValue;
+                }
+                else
+                {
+                    tmp[pos++] = (int)size;
+                }
+            }
+
+            if (pos != tmp.Length)
+            {
+                var ret = new int[pos];
+
+                Array.Copy(tmp, ret, pos);
+
+                return ret;
+            }
+
+            return tmp;
+        }
+
+        // Constructor initialization
+        private void InitializeFromCollection(IEnumerable<KeyValuePair<TKey, TValue>> collection)
+        {
+            foreach (KeyValuePair<TKey, TValue> pair in collection)
+            {
+                if (pair.Key == null)
+                {
+                    ThrowKeyNullException();
+                }
+
+                if (!TryAdd(pair.Key, pair.Value))
+                {
+                    throw new ArgumentException(SR.ConcurrentDictionary_SourceContainsDuplicateKeys);
+                }
+            }
+        }
+
         #endregion
     }
 
+    // 
     [DebuggerDisplay("Count = {Count}")]
     [StructLayout(LayoutKind.Explicit, Size = PaddingHelpers.CACHE_LINE_SIZE)]
     internal class ConcurrentDictionaryCounter
