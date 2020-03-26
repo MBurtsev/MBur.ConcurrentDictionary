@@ -484,7 +484,7 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Readind)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         frame = Volatile.Read(ref data.Frame);
 
@@ -500,13 +500,7 @@ namespace MBur.Collections.LockFree_v1/*c*/
                             comp.Equals(key, bucket.Key)
                        )
                     {
-                        if (sync == (int)RecordStatus.Readind)
-                        {
-                            value = bucket.Value;
-
-                            return true;
-                        }
-                        else if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
+                        if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
                         {
                             value = bucket.Value;
 
@@ -976,21 +970,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         // check exist
                         if (comp.Equals(key, bucket.Key))
                         {
-                            if (sync == (int)RecordStatus.Readind)
-                            {
-                                return bucket.Value;
-                            }
-
                             if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
                             {
-                                try
-                                {
-                                    return bucket.Value;
-                                }
-                                finally
-                                {
-                                    frame.SyncTable[index] = sync;
-                                }
+                                var tmp = bucket.Value;
+
+                                frame.SyncTable[index] = sync;
+
+                                return tmp;
                             }
                         }
 
@@ -1092,21 +1078,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         // check exist
                         if (comp.Equals(key, bucket.Key))
                         {
-                            if (sync == (int)RecordStatus.Readind)
-                            {
-                                return bucket.Value;
-                            }
-
                             if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
                             {
-                                try
-                                {
-                                    return bucket.Value;
-                                }
-                                finally
-                                {
-                                    frame.SyncTable[index] = sync;
-                                }
+                                var value = bucket.Value;
+
+                                frame.SyncTable[index] = sync;
+
+                                return value;
                             }
                         }
 
@@ -1209,21 +1187,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         // check exist
                         if (comp.Equals(key, bucket.Key))
                         {
-                            if (sync == (int)RecordStatus.Readind)
-                            {
-                                return bucket.Value;
-                            }
-
                             if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
                             {
-                                try
-                                {
-                                    return bucket.Value;
-                                }
-                                finally
-                                {
-                                    frame.SyncTable[index] = sync;
-                                }
+                                var value = bucket.Value;
+                                
+                                frame.SyncTable[index] = sync;
+
+                                return value;
                             }
                         }
 
@@ -2802,19 +2772,15 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     }
 
                     // wait if another thread doing something
-                    if (sync > (int)RecordStatus.Readind)
+                    if (sync > (int)RecordStatus.HasValue)
                     {
                         continue;
                     }
 
-                    ref var bucket = ref frame.Buckets[_index];
+                    if (Interlocked.CompareExchange(ref frame.SyncTable[_index], sync | (int)RecordStatus.Readind, sync) == sync)
+                    {
+                        ref var bucket = ref frame.Buckets[_index];
 
-                    if (sync == (int)RecordStatus.Readind)
-                    {
-                        Current = new KeyValuePair<TKey, TValue>(bucket.Key, bucket.Value);
-                    }
-                    else if (Interlocked.CompareExchange(ref frame.SyncTable[_index], sync | (int)RecordStatus.Readind, sync) == sync)
-                    {
                         Current = new KeyValuePair<TKey, TValue>(bucket.Key, bucket.Value);
 
                         frame.SyncTable[_index] = sync;

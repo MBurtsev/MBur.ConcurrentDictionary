@@ -1,6 +1,6 @@
-#define LockFree_v1
+//#define LockFree_v1
 //#define LockFree_v2
-//#define Concurrent
+#define Concurrent
 
 using System;
 using System.Collections.Generic;
@@ -65,7 +65,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -85,10 +84,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -105,7 +102,6 @@ namespace XUnitTest
             }
         }
 
-
         [Fact]
         public static void ContainsKey_A2()
         {
@@ -119,7 +115,6 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -141,10 +136,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -182,7 +175,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -202,10 +194,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -239,7 +229,6 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -261,10 +250,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -302,7 +289,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -323,10 +309,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
 
                 // reader
                 Task.Run(() =>
@@ -349,18 +333,14 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
             {
                 Thread.Yield();
             }
-
-            cts.Cancel();
 
             Assert.True(exception == null);
             Assert.Single(cd);
@@ -382,7 +362,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -402,10 +381,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -436,6 +413,8 @@ namespace XUnitTest
             }
 
             Assert.Equal(count, OPERATIONS);
+
+            
         }
 
         [Fact]
@@ -451,8 +430,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
-
+            
             for (var i = 0; i < threads; ++i)
             {
                 Task.Run(() =>
@@ -473,10 +451,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -529,6 +505,8 @@ namespace XUnitTest
             }
 
             Assert.Equal(count, OPERATIONS * threads);
+                        
+            
         }
 
         #endregion
@@ -547,8 +525,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
-
+            
             for (var j = 0L; j < OPERATIONS; ++j)
             {
                 cd.TryAdd(j, new KeyValuePair<long, long>(j, j));
@@ -578,10 +555,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -616,8 +591,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
-
+            
             for (var j = 0L; j < OPERATIONS; ++j)
             {
                 for (var t = 1; t <= threads; ++t)
@@ -658,10 +632,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -707,7 +679,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var j = 0L; j < OPERATIONS; ++j)
             {
@@ -734,10 +705,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -772,8 +741,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
-
+            
             for (var j = 0L; j < OPERATIONS; ++j)
             {
                 for (var t = 1; t <= threads; ++t)
@@ -809,10 +777,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -856,7 +822,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
 
             for (var j = 0L; j < OPERATIONS; ++j)
             {
@@ -881,10 +847,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -901,6 +865,8 @@ namespace XUnitTest
 
                 Assert.True(flag && item.Key == -j && item.Value == -j);
             }
+
+            
         }
 
         // Testing the integrity of data acquisition in a highly competitive environment
@@ -916,7 +882,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
 
             cd.TryAdd(0, new KeyValuePair<long, long>(-1, -1));
 
@@ -946,10 +912,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -958,7 +922,9 @@ namespace XUnitTest
             }
 
             Assert.True(exception == null);
-            Assert.Equal(cd.Count, 1);
+            Assert.Single(cd);
+
+            
         }
 
         // Update and enumeration
@@ -974,8 +940,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
-
+            
             for (var i = 0; i < threads; ++i)
             {
                 // writer
@@ -995,23 +960,21 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
 
                 // reader
                 Task.Run(() =>
                 {
                     try
                     {
-                        while(true)
+                        for (var j = 0L; j < OPERATIONS; ++j)
                         {
                             foreach (var item in cd)
                             {
                                 if (item.Value.Key != item.Value.Value)
                                 {
-                                    throw new Exception($"{item.Key} != {item.Value}");
+                                    throw new Exception($"{item.Value.Key} != {item.Value.Value}");
                                 }
                             }
                         }
@@ -1021,10 +984,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1032,10 +993,10 @@ namespace XUnitTest
                 Thread.Yield();
             }
 
-            cts.Cancel();
-
             Assert.True(exception == null);
             Assert.Single(cd);
+
+            
         }
 
         #endregion
@@ -1055,7 +1016,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
 
             for (var i = 0; i < threads; ++i)
             {
@@ -1075,10 +1036,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1109,6 +1068,8 @@ namespace XUnitTest
             }
 
             Assert.Equal(count, OPERATIONS);
+
+            
         }
 
         // add mode
@@ -1125,7 +1086,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
 
             for (var i = 0; i < threads; ++i)
             {
@@ -1147,10 +1108,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1203,6 +1162,8 @@ namespace XUnitTest
             }
 
             Assert.Equal(count, OPERATIONS * threads);
+
+            
         }
 
         // get mode + update
@@ -1218,7 +1179,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
 
             for (var i = 0; i < threads; ++i)
             {
@@ -1239,10 +1200,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
 
                 // reader
                 Task.Run(() =>
@@ -1266,18 +1225,14 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
             {
                 Thread.Yield();
             }
-
-            cts.Cancel();
 
             Assert.True(exception == null);
             Assert.Single(cd);
@@ -1300,7 +1255,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> valueFactory(long key)
@@ -1328,10 +1283,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1370,6 +1323,8 @@ namespace XUnitTest
             }
 
             Assert.Equal(count, OPERATIONS);
+
+            
         }
 
         // add mode
@@ -1386,7 +1341,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> valueFactory(long key)
@@ -1416,10 +1371,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1473,6 +1426,8 @@ namespace XUnitTest
             }
 
             Assert.Equal(count, OPERATIONS * threads);
+
+            
         }
 
         // get mode + update
@@ -1488,7 +1443,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             KeyValuePair<long, long> valueFactory(long key)
             {
@@ -1514,10 +1468,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
 
                 // reader
                 Task.Run(() =>
@@ -1539,18 +1491,14 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
             {
                 Thread.Yield();
             }
-
-            cts.Cancel();
 
             Assert.True(exception == null);
             Assert.Single(cd);
@@ -1573,7 +1521,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> valueFactory(long key, long arg)
@@ -1601,10 +1549,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1659,7 +1605,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> valueFactory(long key, long arg)
@@ -1689,10 +1635,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1761,11 +1705,10 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             KeyValuePair<long, long> valueFactory(long key, long arg)
             {
-                return new KeyValuePair<long, long>(arg, arg);
+                return new KeyValuePair<long, long>(key % THREADS_KEY_RANGE, arg % THREADS_KEY_RANGE);
             }
 
             for (var i = 0; i < threads; ++i)
@@ -1787,10 +1730,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
 
                 // reader
                 Task.Run(() =>
@@ -1799,7 +1740,7 @@ namespace XUnitTest
                     {
                         for (var j = 0L; j < OPERATIONS; ++j)
                         {
-                            var item = cd.GetOrAdd(0, valueFactory, j);
+                            var item = cd.GetOrAdd(0, valueFactory, 0L);
 
                             if (item.Key != item.Value)
                             {
@@ -1812,10 +1753,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1823,13 +1762,11 @@ namespace XUnitTest
                 Thread.Yield();
             }
 
-            cts.Cancel();
-
             Assert.True(exception == null);
             Assert.Single(cd);
         }
 
-#endregion
+        #endregion
 
         #region ' J. AddOrUpdate '
 
@@ -1846,7 +1783,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> addValueFactory(long key, long arg)
@@ -1881,10 +1818,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -1939,7 +1874,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> addValueFactory(long key, long arg)
@@ -1976,10 +1911,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2048,8 +1981,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
-
+            
             KeyValuePair<long, long> addValueFactory(long key, long arg)
             {
                 return new KeyValuePair<long, long>(key % THREADS_KEY_RANGE, key % THREADS_KEY_RANGE);
@@ -2078,10 +2010,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2102,7 +2032,7 @@ namespace XUnitTest
             }
         }
 
-#endregion
+        #endregion
 
         #region ' K. AddOrUpdate '
 
@@ -2119,7 +2049,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> addValueFactory(long key)
@@ -2154,10 +2084,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2212,7 +2140,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> addValueFactory(long key)
@@ -2249,10 +2177,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2321,7 +2247,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             KeyValuePair<long, long> addValueFactory(long key)
             {
@@ -2351,10 +2276,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2375,7 +2298,7 @@ namespace XUnitTest
             }
         }
 
-#endregion
+        #endregion
 
         #region ' L. AddOrUpdate '
 
@@ -2392,7 +2315,7 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> updateValueFactory(long key, KeyValuePair<long, long> current)
@@ -2420,10 +2343,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2471,7 +2392,7 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
+            
             var requested = 0;
 
             KeyValuePair<long, long> updateValueFactory(long key, KeyValuePair<long, long> current)
@@ -2501,10 +2422,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2573,7 +2492,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             KeyValuePair<long, long> updateValueFactory(long key, KeyValuePair<long, long> current)
             {
@@ -2598,10 +2516,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2622,7 +2538,7 @@ namespace XUnitTest
             }
         }
 
-#endregion
+        #endregion
 
         #region ' M. AddOrUpdate '
 
@@ -2641,7 +2557,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -2661,10 +2576,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2711,7 +2624,6 @@ namespace XUnitTest
             var thread_id = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -2733,10 +2645,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2804,7 +2714,6 @@ namespace XUnitTest
             var ready = 0;
             var exception = null as Exception;
             var cd = new ConcurrentDictionary<long, KeyValuePair<long, long>>();
-            var cts = new CancellationTokenSource();
 
             for (var i = 0; i < threads; ++i)
             {
@@ -2824,10 +2733,8 @@ namespace XUnitTest
                         exception = e;
 
                         ready = threads;
-
-                        cts.Cancel();
                     }
-                }, cts.Token);
+                });
             }
 
             while (Volatile.Read(ref ready) < threads)
@@ -2848,6 +2755,6 @@ namespace XUnitTest
             }
         }
 #endif
-#endregion
+        #endregion
     }
 }
