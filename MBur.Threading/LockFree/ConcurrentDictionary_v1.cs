@@ -37,10 +37,6 @@ namespace MBur.Collections.LockFree_v1/*c*/
         private const int DEFAULT_CAPACITY = 127;
         // The default array size of counts
         private const int COUNTS_SIZE = 16;
-        // The size for first segments
-        private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
-        // The number of operations through which the page will be allowed to be used again.
-        private const int WRITER_DELAY = 4096;//1024
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.

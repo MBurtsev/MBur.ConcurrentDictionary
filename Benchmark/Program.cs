@@ -28,7 +28,7 @@ namespace Benchmark
             //BenchmarkRunner.Run<ConcurrentDictionaryBench>();
 
             // LockFreeDictionary
-            BenchmarkRunner.Run<LockFreeDictionaryBench>();
+            //BenchmarkRunner.Run<LockFreeDictionaryBench>();
 
             // Wat-Free Count
             // for this test recommended to configure ThreadsBenchConfig.OperationsCount = 100M 
@@ -36,7 +36,7 @@ namespace Benchmark
 
             //TryGetTest();
             //Debug();
-            //MemoryUsage();
+            MemoryUsage();
 
             Console.WriteLine("Press any key for exit");
             Console.ReadLine();
@@ -116,6 +116,15 @@ namespace Benchmark
 
         static void MemoryUsage()
         {
+            Console.WriteLine($"Memory usage for LockFree.ConcurrentDictionary v1");
+
+            MemoryUsageLockFree_v1(1);
+            MemoryUsageLockFree_v1(1000);
+            MemoryUsageLockFree_v1(1000_000);
+            MemoryUsageLockFree_v1(10_000_000);
+
+            Console.WriteLine();
+
             Console.WriteLine($"Memory usage for LockFree.ConcurrentDictionary v2");
 
             MemoryUsageLockFree_v2(1);
@@ -159,6 +168,31 @@ namespace Benchmark
             dictionary = null;
         }
 
+
+        static void MemoryUsageLockFree_v1(int count)
+        {
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+            GC.WaitForPendingFinalizers();
+
+            var mem = GC.GetTotalMemory(true);
+
+            dictionary = new MBur.Collections.LockFree_v1.ConcurrentDictionary<int, int>();
+
+            for (var i = 0; i < count; ++i)
+            {
+                dictionary[i] = i;
+            }
+
+            mem = GC.GetTotalMemory(true) - mem;
+
+            Console.WriteLine();
+            Console.WriteLine($"Elements count: {count:### ### ### ###}");
+            Console.WriteLine($"Memory alocated: {mem:### ### ### ###}");
+            Console.WriteLine($"Size cost per item: {Math.Truncate((double)mem / count)}");
+
+            dictionary = null;
+        }
+
         static void MemoryUsageLockFree_v2(int count)
         {
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
@@ -182,6 +216,7 @@ namespace Benchmark
 
             dictionary = null;
         } 
+
         #endregion
     }
 }
