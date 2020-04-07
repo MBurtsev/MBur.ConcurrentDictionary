@@ -1,10 +1,6 @@
 ﻿// Maksim Burtsev https://github.com/MBurtsev
 // Licensed under the MIT license.
 
-// Select version
-#define v1
-//#define v2
-
 // Select benchmarks
 #define TRY_ADD
 #define TRY_GET_VALUE
@@ -20,23 +16,12 @@ using Benchmark.Helpers;
 using System.Collections.Generic;
 using System.Threading;
 using System.Diagnostics;
-
-#if v1
-
-using MBur.Collections.LockFree_v1;
-
-#endif
-
-#if v2
-
-using MBur.Collections.LockFree;
-
-#endif
+using MBur.Collections.LockFree_B;
 
 namespace Benchmark.ThreadsBench
 {
     [Config(typeof(ThreadsBenchConfig))]
-    public class LockFreeDictionaryBench
+    public class LockFreeDictionaryBench_B
     {
         // This number is necessary to calculate the base key.
         // It should be more than the number of operations.
@@ -68,10 +53,6 @@ namespace Benchmark.ThreadsBench
         public void Add()
         {
             bench.Begin();
-
-            //var id = 5;
-
-            //data.ValidateCabinet(id);
         }
 
         void AddWork()
@@ -82,8 +63,6 @@ namespace Benchmark.ThreadsBench
             {
                 data.TryAdd(key + i, i);
             }
-
-            //Debug.WriteLine(Thread.CurrentThread.ManagedThreadId);
         }
 
 #endif

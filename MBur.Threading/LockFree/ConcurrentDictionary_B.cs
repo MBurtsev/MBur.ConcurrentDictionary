@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace MBur.Collections.LockFree_v1/*c*/
+namespace MBur.Collections.LockFree_B
 {
     /// <summary>
     /// Represents a thread-safe collection of keys and values.
@@ -37,6 +37,10 @@ namespace MBur.Collections.LockFree_v1/*c*/
         private const int DEFAULT_CAPACITY = 127;
         // The default array size of counts
         private const int COUNTS_SIZE = 16;
+        // The size for first segments
+        private const int CYCLE_BUFFER_SEGMENT_SIZE = 128;
+        // The number of operations through which the page will be allowed to be used again.
+        private const int WRITER_DELAY = 4096;//1024
         // The thread Id
         [ThreadStatic] private static int t_id;
         // All current data is collected here.
@@ -428,12 +432,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     sync  = frame.SyncTable[index];
                 }
 
-                ref var bucket  = ref frame.Buckets[index];
+                var link = frame.Links[index];
+                ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                 if (
                         (sync & (int)RecordStatus.HasValue) != 0
                                     &&
-                        comp.Equals(key, bucket.Key)
+                        comp.Equals(key, buck.Key)
                    )
                 {
                     return true;
@@ -463,62 +468,46 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 ThrowKeyNullException();
             }
 
+            // Each change occurs in a new area of memory. The operability of this 
+            // function is provided by the time-lag effect. When a thread loses a 
+            // time quantum when switching tasks, its expectation of a new quantum 
+            // is much less than the time when a page can be reused for recording.
+
             unchecked
             {
                 var data  = _data;
                 var comp  = _keysComparer;
                 var frame = data.Frame;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var index = hash % frame.HashMaster;
+                var sync  = frame.SyncTable[index];
 
-                while (true)
+                while (sync == (int)RecordStatus.Grown)
                 {
-                    var index = hash % frame.HashMaster;
-                    var syncs = frame.SyncTable;
-                    var sync  = syncs[index];
-
-                    while (sync == (int)RecordStatus.Grown)
-                    {
-                        frame = frame.Next;
-                        index = hash % frame.HashMaster;
-                        sync  = frame.SyncTable[index];
-                    }
-
-                    // wait if another thread doing something
-                    if (sync > (int)RecordStatus.HasValue)
-                    {
-                        frame = Volatile.Read(ref data.Frame);
-
-                        continue;
-                    }
-
-                    ref var bucket = ref frame.Buckets[index];
-
-                    // check exist
-                    if (
-                            (sync & (int)RecordStatus.HasValue) != 0
-                                        &&
-                            comp.Equals(key, bucket.Key)
-                       )
-                    {
-                        if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
-                        {
-                            value = bucket.Value;
-
-                            frame.SyncTable[index] = sync;
-
-                            return true;
-                        }
-                    }
-                    else
-                    {
-                        // not exist
-                        value = default;
-
-                        return false;
-                    }
-
-                    frame = Volatile.Read(ref data.Frame);
+                    frame = frame.Next;
+                    index = hash % frame.HashMaster;
+                    sync  = frame.SyncTable[index];
                 }
+
+                var link  = frame.Links[index];
+                ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                // check exist
+                if (
+                        (sync & (int)RecordStatus.HasValue) != 0
+                                    &&
+                        comp.Equals(key, buck.Key)
+                   )
+                {
+                    value = buck.Value;
+
+                    return true;
+                }
+
+                // not exist
+                value = default;
+
+                return false;
             }
         }
 
@@ -553,6 +542,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -584,7 +576,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                var page = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -603,10 +601,11 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     // growing
                     else
                     {
-                        ref var bucket = ref frame.Buckets[index];
+                        var link = frame.Links[index];
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
-                        if (comp.Equals(key, bucket.Key))
+                        if (comp.Equals(key, buck.Key))
                         {
                             return false;
                         }
@@ -679,10 +678,11 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         continue;
                     }
 
-                    ref var bucket = ref frame.Buckets[index];
+                    var link = frame.Links[index];
+                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                     // check
-                    if (!comp.Equals(key, bucket.Key) || !_valuesComparer.Equals(val, bucket.Value))
+                    if (!comp.Equals(key, buck.Key) || !_valuesComparer.Equals(val, buck.Value))
                     {
                         return false;
                     }
@@ -692,7 +692,7 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     {
                         try
                         {
-                            bucket = new Bucket();
+                            RemoveLink(data, link, GetCabinet(data).Id);
 
                             syncs[index] = (int)RecordStatus.Empty;
 
@@ -769,10 +769,11 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         continue;
                     }
 
-                    ref var bucket = ref frame.Buckets[index];
+                    var link = frame.Links[index];
+                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                     // check
-                    if (!comp.Equals(key, bucket.Key))
+                    if (!comp.Equals(key, buck.Key))
                     {
                         value = default;
 
@@ -784,7 +785,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     {
                         try
                         {
-                            value = bucket.Value;
+                            value = buck.Value;
+
+                            RemoveLink(data, link, GetCabinet(data).Id);
 
                             syncs[index] = (int)RecordStatus.Empty;
 
@@ -833,6 +836,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 while (true)
                 {
@@ -856,15 +862,16 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         continue;
                     }
 
-                    ref var bucket = ref frame.Buckets[index];
+                    var link = frame.Links[index];
+                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                     // check exist
                     if (
                             (sync & (int)RecordStatus.HasValue) == 0 
                                             || 
-                            !comp.Equals(key, bucket.Key)
+                            !comp.Equals(key, buck.Key)
                                             ||
-                            !_valuesComparer.Equals(bucket.Value, comparisonValue)
+                            !_valuesComparer.Equals(buck.Value, comparisonValue)
                        )
                     {
                         return false;
@@ -875,7 +882,15 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     {
                         try
                         {
-                            frame.Buckets[index] = new Bucket { Key = key, Value = newValue };
+                            var page = cabn.ReadyPage;
+
+                            cabn.Buckets[page].Key   = key;
+                            cabn.Buckets[page].Value = newValue;
+                            cabn.ReadyPage           = -1;
+
+                            frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                            RemoveLink(data, link, cabn.Id);
 
                             return true;
                         }
@@ -915,6 +930,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -946,7 +964,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                var page = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -965,19 +989,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     // growing
                     else
                     {
-                        ref var bucket = ref frame.Buckets[index];
+                        var link = frame.Links[index];
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
-                        if (comp.Equals(key, bucket.Key))
+                        if (comp.Equals(key, buck.Key))
                         {
-                            if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
-                            {
-                                var tmp = bucket.Value;
-
-                                frame.SyncTable[index] = sync;
-
-                                return tmp;
-                            }
+                            return buck.Value;
                         }
 
                         GrowTable(data);
@@ -1021,6 +1039,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -1047,14 +1068,19 @@ namespace MBur.Collections.LockFree_v1/*c*/
 
                     if ((sync & (int)RecordStatus.HasValue) == 0)
                     {
-                        // adding
+                        // try to get lock
                         if (Interlocked.CompareExchange(ref syncs[index], sync | (int)RecordStatus.Adding, sync) == sync)
                         {
                             try
                             {
                                 var value = valueFactory(key);
+                                var page  = cabn.ReadyPage;
 
-                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -1073,19 +1099,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     // growing
                     else
                     {
-                        ref var bucket = ref frame.Buckets[index];
+                        var link = frame.Links[index];
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
-                        if (comp.Equals(key, bucket.Key))
+                        if (comp.Equals(key, buck.Key))
                         {
-                            if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
-                            {
-                                var value = bucket.Value;
-
-                                frame.SyncTable[index] = sync;
-
-                                return value;
-                            }
+                            return buck.Value;
                         }
 
                         GrowTable(data);
@@ -1130,6 +1150,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -1162,8 +1185,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                             try
                             {
                                 var value = valueFactory(key, factoryArgument);
+                                var page  = cabn.ReadyPage;
 
-                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -1182,19 +1210,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                     // growing
                     else
                     {
-                        ref var bucket = ref frame.Buckets[index];
+                        var link = frame.Links[index];
+                        ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                         // check exist
-                        if (comp.Equals(key, bucket.Key))
+                        if (comp.Equals(key, buck.Key))
                         {
-                            if (Interlocked.CompareExchange(ref frame.SyncTable[index], sync | (int)RecordStatus.Readind, sync) == sync)
-                            {
-                                var value = bucket.Value;
-                                
-                                frame.SyncTable[index] = sync;
-
-                                return value;
-                            }
+                            return buck.Value;
                         }
 
                         GrowTable(data);
@@ -1248,6 +1270,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -1281,8 +1306,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                             try
                             {
                                 var value = addValueFactory(key, factoryArgument);
+                                var page  = cabn.ReadyPage;
 
-                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -1306,16 +1336,23 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                var link = frame.Buckets[index];
-                                ref var bucket = ref frame.Buckets[index];
+                                var link = frame.Links[index];
+                                ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                                 // check exist
-                                if (comp.Equals(key, bucket.Key))
+                                if (comp.Equals(key, buck.Key))
                                 {
 
-                                    var value = updateValueFactory(key, bucket.Value, factoryArgument);
+                                    var value = updateValueFactory(key, buck.Value, factoryArgument);
+                                    var page  = cabn.ReadyPage;
 
-                                    frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = value;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                    RemoveLink(data, link, cabn.Id);
 
                                     return value;
                                 }
@@ -1382,6 +1419,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -1414,8 +1454,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                             try
                             {
                                 var value = addValueFactory(key);
+                                var page  = cabn.ReadyPage;
 
-                                frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = value;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -1438,15 +1483,22 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                var link = frame.Buckets[index];
-                                ref var bucket = ref frame.Buckets[index];
+                                var link = frame.Links[index];
+                                ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                                 // check exist
-                                if (comp.Equals(key, bucket.Key))
+                                if (comp.Equals(key, buck.Key))
                                 {
-                                    var value = updateValueFactory(key, bucket.Value);
+                                    var value = updateValueFactory(key, buck.Value);
+                                    var page  = cabn.ReadyPage;
 
-                                    frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = value;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                    RemoveLink(data, link, cabn.Id);
 
                                     return value;
                                 }
@@ -1506,6 +1558,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 var frame = data.Frame;
                 var comp  = _keysComparer;
                 var hash  = comp.GetHashCode(key) & 0x7fffffff;
+                var cabn  = GetCabinet(data);
+
+                PreparePage(cabn);
 
                 // search empty space
                 while (true)
@@ -1537,7 +1592,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                frame.Buckets[index] = new Bucket { Key = key, Value = addValue };
+                                var page  = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = addValue;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -1561,15 +1622,22 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                var link = frame.Buckets[index];
-                                ref var bucket = ref frame.Buckets[index];
+                                var link = frame.Links[index];
+                                ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
                                 // check exist
-                                if (comp.Equals(key, bucket.Key))
+                                if (comp.Equals(key, buck.Key))
                                 {
-                                    var value = updateValueFactory(key, bucket.Value);
+                                    var value = updateValueFactory(key, buck.Value);
+                                    var page  = cabn.ReadyPage;
 
-                                    frame.Buckets[index] = new Bucket { Key = key, Value = value };
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = value;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+
+                                    RemoveLink(data, link, cabn.Id);
 
                                     return value;
                                 }
@@ -1619,6 +1687,9 @@ namespace MBur.Collections.LockFree_v1/*c*/
             var frame = data.Frame;
             var comp  = _keysComparer;
             var hash  = comp.GetHashCode(key) & 0x7fffffff;
+            var cabn  = GetCabinet(data);
+
+            PreparePage(cabn);
 
             unchecked
             {
@@ -1652,7 +1723,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                frame.Buckets[index] = new Bucket { Key = key, Value = addValue };
+                                var page = cabn.ReadyPage;
+
+                                cabn.Buckets[page].Key   = key;
+                                cabn.Buckets[page].Value = addValue;
+                                cabn.ReadyPage           = -1;
+
+                                frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
 
                                 syncs[index] = (int)RecordStatus.HasValue;
 
@@ -1675,12 +1752,21 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         {
                             try
                             {
-                                var link = frame.Buckets[index];
-                                ref var bucket = ref frame.Buckets[index];
+                                var link = frame.Links[index];
+                                ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                                if (comp.Equals(key, bucket.Key))
+                                if (comp.Equals(key, buck.Key))
                                 {
-                                    frame.Buckets[index] = new Bucket { Key = key, Value = updateValue };
+                                    var page = cabn.ReadyPage;
+
+                                    cabn.Buckets[page].Key   = key;
+                                    cabn.Buckets[page].Value = updateValue;
+                                    cabn.ReadyPage           = -1;
+
+                                    frame.Links[index] = new Link { Id = cabn.Id, Positon = page };
+                                    //Volatile.Write(ref frame.Links[index].Int64View, ((long)page << 32) + cabn.Id);
+   
+                                    RemoveLink(data, link, cabn.Id);
 
                                     return updateValue;
                                 }
@@ -1811,6 +1897,7 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 { 
                     var comp    = _keysComparer;
                     var frame   = data.Frame;
+                    var cabinet = GetCabinet(data);
 
                     if (data.CurrentSize == _primeSizes.Length)
                     {
@@ -1840,7 +1927,13 @@ namespace MBur.Collections.LockFree_v1/*c*/
                             {
                                 if ((sync & (int)RecordStatus.HasValue) != 0)
                                 {
-                                    InsertGrowingBucket(data, frame.Next, ref frame.Buckets[i]);
+                                    var link = frame.Links[i];
+
+                                    ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                                    var hash = comp.GetHashCode(buck.Key) & 0x7fffffff;
+
+                                    SetGrowingLink(data, frame.Next, link, hash);
                                 }
 
                                 // unlock
@@ -1861,6 +1954,8 @@ namespace MBur.Collections.LockFree_v1/*c*/
 
                     // unlock growing
                     data.SyncGrowing = 0;
+
+                    PreparePage(cabinet);
                 }
                 catch
                 {
@@ -1872,16 +1967,15 @@ namespace MBur.Collections.LockFree_v1/*c*/
         }
 
         // 
-        private void InsertGrowingBucket(HashTableData data, HashTableDataFrame frame, ref Bucket bucket)
+        private void SetGrowingLink(HashTableData data, HashTableDataFrame frame, Link link, int hash)
         {
             var comp  = _keysComparer;
-            var hash  = comp.GetHashCode(bucket.Key) & 0x7fffffff;
             var index = hash % frame.HashMaster;
             var sync  = frame.SyncTable[index];
 
             if (sync == (int)RecordStatus.Grown)
             {
-                InsertGrowingBucket(data, frame.Next, ref bucket);
+                SetGrowingLink(data, frame.Next, link, hash);
 
                 return;
             }
@@ -1915,17 +2009,25 @@ namespace MBur.Collections.LockFree_v1/*c*/
                 }
 
                 // set current link
-                InsertGrowingBucket(data, frame.Next, ref bucket);
+                SetGrowingLink(data, frame.Next, link, hash);
 
                 // set coolision link
-                InsertGrowingBucket(data, frame.Next, ref frame.Buckets[index]);
+                link = frame.Links[index];
+
+                ref var buck = ref data.Cabinets[link.Id].Buckets[link.Positon];
+
+                hash = comp.GetHashCode(buck.Key) & 0x7fffffff;
+
+                SetGrowingLink(data, frame.Next, link, hash);
 
                 // unlock
                 frame.SyncTable[index] = (int)RecordStatus.Grown;
             }
             else
             {
-                frame.Buckets[index]   = bucket;
+                frame.Links[index] = link;
+
+                // unlock
                 frame.SyncTable[index] = (int)RecordStatus.HasValue;
             }
         }
@@ -2027,6 +2129,292 @@ namespace MBur.Collections.LockFree_v1/*c*/
             data.SyncCounts = 0;
 
             return tmp_counts;
+        }
+
+        // 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private Cabinet GetCabinet(HashTableData data)
+        {
+            var id = t_id;
+            var cabinets = data.Cabinets;
+
+            if (id == 0 || id >= cabinets.Length)
+            {
+                id = t_id = Thread.CurrentThread.ManagedThreadId;
+
+                if (id >= cabinets.Length)
+                {
+                    cabinets = ResizeCabinets(data);
+                }
+            }
+
+            return cabinets[id];
+        }
+
+        // 
+        private Cabinet[] ResizeCabinets(HashTableData data)
+        {
+            var id = t_id;
+
+            while (Interlocked.CompareExchange(ref data.SyncCabinets, 1, 0) != 0)
+            {
+                while (Volatile.Read(ref data.SyncCabinets) != 0)
+                {
+                    Thread.Yield();
+                }
+
+                var сabinets = Volatile.Read(ref data.Cabinets);
+
+                if (id < сabinets.Length)
+                {
+                    return сabinets;
+                }
+            }
+
+            var len = data.Cabinets.Length;
+
+            if (id > len)
+            {
+                len = id;
+            }
+
+            var tmp_Cabinets = new Cabinet[len * 2];
+
+            Array.Copy(data.Cabinets, tmp_Cabinets, data.Cabinets.Length);
+
+            // fill with empty Cabinets
+            for (var i = data.Cabinets.Length; i < tmp_Cabinets.Length; ++i)
+            {
+                tmp_Cabinets[i] = new Cabinet(i);
+            }
+
+            // write new Cabinets link
+            Volatile.Write(ref data.Cabinets, tmp_Cabinets);
+            //data.Cabinets = tmp_Cabinets;
+
+            // unlock Cabinets
+            data.SyncCabinets = 0;
+
+            return tmp_Cabinets;
+        }
+        
+        // 
+        private void PreparePage(Cabinet cabinet)
+        {
+            if (cabinet.ReadyPage < 0)
+            {
+                // return not used elememnt
+                if (cabinet.Positon < cabinet.Buckets.Length - WRITER_DELAY)
+                {
+                    cabinet.ReadyPage = cabinet.Positon++;
+
+                    return;
+                }
+
+                var guest = cabinet.Current ?? cabinet.GuestsList;
+
+                // return removed element
+                if (guest != null)
+                {
+                    var cur_guest = guest;
+
+                    while (true)
+                    {
+                        ref var cur_seg = ref cur_guest.MessageBuffer.Reader;
+
+                        while (true)
+                        {
+                            // validation reader position
+                            if (cur_seg.ReaderPosition != cur_seg.WriterPosition)
+                            {
+                                cabinet.ReadyPage = cur_seg.Messages[cur_seg.ReaderPosition];
+
+                                // set position to next element for reading
+                                if (cur_seg.ReaderPosition < cur_seg.Messages.Length - 1)
+                                {
+                                    cur_seg.ReaderPosition++;
+                                }
+                                else
+                                {
+                                    cur_seg.ReaderPosition = 0;
+                                }
+
+                                // save current guest
+                                cabinet.Current = cur_guest;
+
+                                return;
+                            }
+
+                            if (cur_seg.Next == null)
+                            {
+                                break;
+                            }
+
+                            // swap to next segment
+                            cur_seg = cur_seg.Next;
+                        }
+
+                        // swap to next guest
+                        cur_guest = cur_guest.Next;
+
+                        if (cur_guest == null)
+                        {
+                            cur_guest = cabinet.GuestsList;
+                        }
+
+                        if (cur_guest == guest)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                // grow buckets
+                if (cabinet.Buckets.Length == int.MaxValue)
+                {
+                    throw new OverflowException();
+                }
+
+                var len = cabinet.Buckets.Length * 2d;
+
+                if (len > int.MaxValue)
+                {
+                    len = int.MaxValue;
+                }
+
+                var tmp = new Bucket[(int)len];
+
+                Array.Copy(cabinet.Buckets, tmp, cabinet.Buckets.Length);
+
+                //Volatile.Write(ref cabinet.Buckets, tmp);
+                cabinet.Buckets   = tmp;
+                cabinet.ReadyPage = cabinet.Positon++;
+            }
+        }
+
+        // 
+        private void RemoveLink(HashTableData data, Link link, int guest_id)
+        {
+            if (link.Id == 0)
+            {
+                return;
+            }
+
+            Guest guest;
+
+            var owner = data.Cabinets[link.Id];
+            var table = owner.GuestsTable;
+
+            // grow guests table
+            if (guest_id >= table.Length)
+            {
+                try
+                {
+                    while (Interlocked.CompareExchange(ref owner.Sync, guest_id, 0) != 0)
+                    {
+                    }
+
+                    table = Volatile.Read(ref owner.GuestsTable);
+
+                    if (guest_id >= table.Length)
+                    {
+                        var len = (guest_id / 4 + 1) * 4;
+                        var tmp = new Guest[len];
+
+                        Array.Copy(table, tmp, table.Length);
+
+                        owner.GuestsTable = table = tmp;
+                    }
+                }
+                finally
+                {
+                    owner.Sync = 0;
+                }
+            }
+
+            // setup new guest
+            if (table[guest_id] == null)
+            {
+                guest = new Guest(guest_id);
+
+                try
+                {
+                    while (Interlocked.CompareExchange(ref owner.Sync, guest_id, 0) != 0)
+                    {
+                    }
+
+                    guest.Next = Volatile.Read(ref owner.GuestsList);
+
+                    owner.GuestsList = guest;
+
+                    table[guest_id] = guest;
+
+                }
+                finally
+                {
+                    owner.Sync = 0;
+                }
+            }
+
+            guest = table[guest_id];
+
+            // write to delay buffer
+            if (guest.DelayPosition == WRITER_DELAY)
+            {
+                guest.DelayPosition = 0;
+                guest.DelayBufferReady = true;
+            }
+
+            if (!guest.DelayBufferReady)
+            {
+                guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
+
+                return;
+            }
+
+            var pos = guest.DelayBuffer[guest.DelayPosition];
+
+            guest.DelayBuffer[guest.DelayPosition++] = link.Positon;
+
+            var seg = guest.MessageBuffer.Writer;
+
+            // write message
+            if (seg.WriterPosition != seg.ReaderPosition - 1)
+            {
+                if (seg.WriterPosition == seg.Messages.Length - 1)
+                {
+                    if (seg.ReaderPosition > 0)
+                    {
+                        seg.Messages[seg.WriterPosition] = pos;
+                        seg.WriterPosition = 0;
+
+                        return;
+                    }
+                }
+                else
+                {
+                    seg.Messages[seg.WriterPosition++] = pos;
+
+                    return;
+                }
+            }
+
+            // create new segment
+            var new_seg = new CycleBufferSegment(seg.Messages.Length * 2);
+
+            new_seg.WriterPosition = 1;
+            new_seg.Messages[0]    = pos;
+
+            seg.Next = new_seg;
+
+            guest.MessageBuffer.Writer = new_seg;
+
+            // Remove readed segments
+            // It makes no reason to keep smaller segments. This reduces the
+            // number of iterations for the read thread.
+
+
+
         }
 
         #endregion
@@ -2649,12 +3037,11 @@ namespace MBur.Collections.LockFree_v1/*c*/
         {
             Empty     = 00,
             HasValue  = 01,
-            Readind   = 02,
-            Adding    = 04,
-            Removing  = 08,
-            Updating  = 16,
-            Growing   = 32,
-            Grown     = 64
+            Adding    = 02,
+            Removing  = 04,
+            Updating  = 08,
+            Growing   = 16,
+            Grown     = 32
         }
 
         /// <summary>
@@ -2668,10 +3055,12 @@ namespace MBur.Collections.LockFree_v1/*c*/
             {
                 Frame        = new HashTableDataFrame(hashMaster);
                 Counts       = new ConcurrentDictionaryCounter[threads];
+                Cabinets     = new Cabinet[threads];
                 CurrentSize  = 0;
 
                 for (var i = 0; i < threads; ++i)
                 {
+                    Cabinets[i] = new Cabinet(i);
                     Counts[i]   = new ConcurrentDictionaryCounter();
                 }
             }
@@ -2686,11 +3075,17 @@ namespace MBur.Collections.LockFree_v1/*c*/
             // To synchronize threads when expanding the counters array
             public int SyncCounts;
 
+            // To synchronize threads when expanding the cabinets array
+            public int SyncCabinets;
+
             // Current data frame
             public HashTableDataFrame Frame;
 
             // Array of counters
             public ConcurrentDictionaryCounter[] Counts;
+
+            // 
+            public Cabinet[] Cabinets;
 
             // Current size
             public int CurrentSize;
@@ -2705,7 +3100,7 @@ namespace MBur.Collections.LockFree_v1/*c*/
             {
                 HashMaster   = hashMaster;
                 SyncTable    = new int[hashMaster];
-                Buckets      = new Bucket[hashMaster];
+                Links        = new Link[hashMaster];
                 Next         = null;
             }
 
@@ -2715,11 +3110,107 @@ namespace MBur.Collections.LockFree_v1/*c*/
             // State array. Used to synchronize threads. See RecordStatus
             public readonly int[] SyncTable;
 
-            // Array of buckets
-            public Bucket[] Buckets;
+            // 
+            public readonly Link[] Links;
 
             //
             public HashTableDataFrame Next;
+        }
+
+        // 
+        private sealed class Cabinet
+        {
+            public Cabinet(int id)
+            {
+                Id          = id;
+                ReadyPage   = -1;
+                Positon     = 0;
+                GuestsTable = new Guest[0];
+                Buckets     = new Bucket[WRITER_DELAY * 4];
+           }
+
+            // owner id
+            public readonly int Id;
+            // Prepared page for a new record
+            public int ReadyPage;
+            // linked list of guests (convenient for the owner)
+            public Guest GuestsList;
+            // by id table of guests (convenient for the guest)
+            public Guest[] GuestsTable;
+            // current guest the owner is working with
+            public Guest Current;
+            // for synchronization threads during initialization
+            public int Sync;
+            // current position in Buckets array
+            public int Positon;
+            // Array of buckets
+            public Bucket[] Buckets;
+        }
+
+        // 
+        private sealed class Guest
+        {
+            public Guest(int id)
+            {
+                Id               = id;
+                Next             = null;
+                MessageBuffer    = new CycleBuffer(CYCLE_BUFFER_SEGMENT_SIZE);
+                DelayBuffer      = new int[WRITER_DELAY];
+                DelayBufferReady = false;
+            }
+
+            // guest id
+            public int Id;
+            // next guest
+            public Guest Next;
+            // cycle buffer
+            public CycleBuffer MessageBuffer;
+            //
+            public bool DelayBufferReady;
+            //
+            public int DelayPosition;
+            // 
+            public int[] DelayBuffer;
+        }
+
+        // A cycle buffer that implements a producer-consumer pattern. 
+        // Fully Wait-Free implementation.
+        internal class CycleBuffer
+        {
+            public CycleBuffer(int capacity)
+            {
+                var seg = new CycleBufferSegment(capacity);
+
+                Reader = seg;
+                Writer = seg;
+            }
+
+            // current reader segment
+            public CycleBufferSegment Reader;
+            // current writer segment
+            public CycleBufferSegment Writer;
+        }
+
+        // If the reading thread does not manage to process messages, a 
+        // new segment is created. If all messages are read, the segment is deleted.
+        internal class CycleBufferSegment
+        {
+            public CycleBufferSegment(int capacity)
+            {
+                Messages = new int[capacity];
+            }
+
+            // Reading thread position
+            public int ReaderPosition;
+
+            // Writing thread position
+            public int WriterPosition;
+
+            // Each message is a position in buckets array
+            public int[] Messages;
+
+            // Next segment
+            public CycleBufferSegment Next;
         }
 
         //
@@ -2777,18 +3268,10 @@ namespace MBur.Collections.LockFree_v1/*c*/
                         continue;
                     }
 
-                    if (Interlocked.CompareExchange(ref frame.SyncTable[_index], sync | (int)RecordStatus.Readind, sync) == sync)
-                    {
-                        ref var bucket = ref frame.Buckets[_index];
+                    var link  = frame.Links[_index];
+                    ref var buck  = ref data.Cabinets[link.Id].Buckets[link.Positon];
 
-                        Current = new KeyValuePair<TKey, TValue>(bucket.Key, bucket.Value);
-
-                        frame.SyncTable[_index] = sync;
-                    }
-                    else
-                    {
-                        continue;
-                    }
+                    Current = new KeyValuePair<TKey, TValue>(buck.Key, buck.Value);
 
                     _index++;
 
@@ -3031,6 +3514,141 @@ namespace MBur.Collections.LockFree_v1/*c*/
         }
 
         #endregion
+
+        #region ' Debug ' 
+
+#if DEBUG
+        public void ValidateCabinet(int id)
+        {
+            var cabinet = _data.Cabinets[id];
+
+            Debug.WriteLine($"Validate cabinet id = {cabinet.Id}");
+
+            var dict = new Dictionary<int, int>();
+
+            var guest = cabinet.GuestsList;
+
+            while (guest != null)
+            {
+                Debug.WriteLine($"Check guest id = {guest.Id}");
+
+                // check delay buffer
+                // ----------------------------------
+                var len = WRITER_DELAY;
+
+                if (!guest.DelayBufferReady)
+                {
+                    len = guest.DelayPosition;
+                }
+
+                for (var i = 0; i < len; ++i)
+                {
+                    var key = guest.DelayBuffer[i];
+
+                    if (dict.ContainsKey(key))
+                    {
+                        Debug.WriteLine($"Already exist in DelayBuffer {key}");
+                    }
+                    else
+                    {
+                        dict.Add(key, 0);
+                    }
+                }
+
+                // check segments
+                // ----------------------------------
+                var seg = guest.MessageBuffer.Reader;
+
+                while (seg != null)
+                {
+                    var pos = seg.ReaderPosition;
+
+                    while (pos != seg.WriterPosition)
+                    {
+                        var key = seg.Messages[pos++];
+
+                        if (dict.ContainsKey(key))
+                        {
+                            Debug.WriteLine($"Already exist in segment {key}");
+                        }
+                        else
+                        {
+                            dict.Add(key, 0);
+                        }
+
+                        if (pos >= seg.Messages.Length)
+                        {
+                            pos = 0;
+                        }
+                    }
+
+                    seg = seg.Next;
+                }
+
+                guest = guest.Next;
+            }
+
+            // Include linked buckets
+            var data = _data;
+
+            for (var i = 0; i < data.Frame.HashMaster; ++i)
+            {
+                if ((data.Frame.SyncTable[i] & (int)RecordStatus.HasValue) != 0)
+                {
+                    var link = data.Frame.Links[i];
+
+                    if (link.Id == cabinet.Id)
+                    {
+                        var key = link.Positon;
+
+                        if (dict.ContainsKey(key))
+                        {
+                            Debug.WriteLine($"Linked position in delay buffer {key}");
+                        }
+                        else
+                        {
+                            dict.Add(key, 0);
+                        }
+                    }
+                }
+            }
+
+            // check lost buckets
+            // ----------------------------------
+            var losts = 0;
+
+            for (var key = 0; key < cabinet.Buckets.Length - cabinet.Positon - WRITER_DELAY; ++key)
+            {
+                if (key != cabinet.ReadyPage && !dict.ContainsKey(key))
+                {
+                    if (losts < 10)
+                    {
+                        Debug.WriteLine($"Bucket lost {key}");
+                    }
+
+                    losts++;
+                }
+            }
+
+            Debug.WriteLine($"Total losts buckets = {losts}");
+        }
+#endif
+        #endregion
+    }
+
+    // 
+    [DebuggerDisplay("Id = {Id}, Positon = {Positon}")]
+    [StructLayout(LayoutKind.Explicit, Size = 8)]
+    internal struct Link
+    {
+        // owner id
+        [FieldOffset(0)]
+        public int Id;
+        // entry index
+        [FieldOffset(4)]
+        public int Positon;
+        [FieldOffset(0)]
+        public long Int64View;
     }
 
     // 

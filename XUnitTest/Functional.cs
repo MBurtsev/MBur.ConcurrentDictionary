@@ -1,6 +1,6 @@
-//#define LockFree_v1
-//#define LockFree_v2
-#define Concurrent
+#define LockFree_A
+//#define LockFree_B
+//#define Concurrent
 
 using System;
 using System.Collections.Generic;
@@ -8,15 +8,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
-#if LockFree_v1
+#if LockFree_A
 
-using MBur.Collections.LockFree_v1;
+using MBur.Collections.LockFree_A;
 
 #endif
 
-#if LockFree_v2
+#if LockFree_B
 
-using MBur.Collections.LockFree;
+using MBur.Collections.LockFree_B;
 
 #endif
 
@@ -665,7 +665,7 @@ namespace XUnitTest
         #region ' E. TryRemove '
 
         // This overload of TryRemove included in .net5
-#if LockFree_v1 || LockFree_v2
+#if LockFree_A || LockFree_B
 
         [Fact]
         public static void TryRemove_E1()
@@ -1295,7 +1295,7 @@ namespace XUnitTest
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
 
-#if LockFree_v1 || LockFree_v2
+#if LockFree_A || LockFree_B
             // The LockFree hash table calls valueFactory only if it is really needed 
             // and the value will be used to insert or update. The current version may 
             // call valueFactory even if the value will not be used, which is a drawback.
@@ -1561,7 +1561,7 @@ namespace XUnitTest
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
 
-#if LockFree_v1 || LockFree_v2
+#if LockFree_A || LockFree_B
             // The LockFree hash table calls valueFactory only if it is really needed 
             // and the value will be used to insert or update. The current version may 
             // call valueFactory even if the value will not be used, which is a drawback.
@@ -1830,7 +1830,7 @@ namespace XUnitTest
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
 
-#if LockFree_v1 || LockFree_v2
+#if LockFree_A || LockFree_B
             // The LockFree hash table calls valueFactory only if it is really needed 
             // and the value will be used to insert or update. The current version may 
             // call valueFactory even if the value will not be used, which is a drawback.
@@ -2096,7 +2096,7 @@ namespace XUnitTest
             Assert.True(exception == null);
             Assert.Equal(cd.Count, OPERATIONS);
             
-#if LockFree_v1 || LockFree_v2
+#if LockFree_A || LockFree_B
             // The LockFree hash table calls valueFactory only if it is really needed 
             // and the value will be used to insert or update. The current version may 
             // call valueFactory even if the value will not be used, which is a drawback.
@@ -2542,7 +2542,7 @@ namespace XUnitTest
 
         #region ' M. AddOrUpdate '
 
-#if LockFree_v1 || LockFree_v2
+#if LockFree_A || LockFree_B
 
         // add mode
         [Fact]
