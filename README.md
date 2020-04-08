@@ -1,9 +1,10 @@
-Lock-Free hash table implementation. CAS operations are used only to sync buckets, which allows threads working with different buckets to have less friction. Wait-Free count is also used, which allowed to abandon Interlocked.Add. All public methods are thread-safe. The enumerator does not lock the hash table while reading.
-See for more information https://www.linkedin.com/pulse/lock-free-hash-table-maksim-burtsev/
+Lock-Free hash table is presented to your attention. The implementation is much better than the .Net Core version. The API is fully compatible with the current version 3.0. The hash table is presented in two versions A and B. In the repository, you can find unit tests proving the absence of bugs. Benchmarks of performance and memory usage are also presented. Below is a list of advantages and disadvantages. See for more information https://www.linkedin.com/pulse/lock-free-hash-table-maksim-burtsev/
 
-![1](https://media-exp1.licdn.com/dms/image/C5612AQE5bSUX1VOctQ/article-inline_image-shrink_1000_1488/0?e=1588809600&v=beta&t=CdG1yFSUrRxMvddcczhsHGUkeCJzrArTT4JViFWvNik)
-![2](https://media-exp1.licdn.com/dms/image/C5612AQG5iqeTwDripA/article-inline_image-shrink_1000_1488/0?e=1588809600&v=beta&t=RF4T49iEIu8CSQxnKn-EVVWuF1KOWapt7abJ_NwrRyc)
-![3](https://media-exp1.licdn.com/dms/image/C5612AQEQJbOtSqhbHQ/article-inline_image-shrink_1500_2232/0?e=1588809600&v=beta&t=7FTeocICcaJ2DFSeC1Jct7KRbFwKeJhWtmQIdJGJ6Vk)
-![4](https://media-exp1.licdn.com/dms/image/C5612AQGYJ9xFGkB0Nw/article-inline_image-shrink_1000_1488/0?e=1588809600&v=beta&t=DFQGtARBiTPGFUl4h-i1vqgVIeumE9swVFN4oTBlskU)
-![5](https://media-exp1.licdn.com/dms/image/C5612AQFhyVRmr4Es8g/article-inline_image-shrink_1000_1488/0?e=1588809600&v=beta&t=dIg1KJLYMhCRn5S_USv3xomwr7VdTH6gm_yzNyTisnU)
-![6](https://media-exp1.licdn.com/dms/image/C5612AQH7LCdXXYeNOA/article-inline_image-shrink_1500_2232/0?e=1588809600&v=beta&t=CNcoe0UfbA89WaZcOXid_rDSLDvfCrgFx1ndt_Qy1QM)
+![1](https://imgur.com/g6hFnpq)
+![2](https://imgur.com/P6tLQvK)
+![3](https://imgur.com/a/cUiApSG)
+![4](https://imgur.com/hWQCqTv)
+![5](https://imgur.com/fjcanEs)
+![6](https://imgur.com/yl9VIER)
+![7](https://imgur.com/yoKubjS)
+![8](https://imgur.com/ryvAe3y)
