@@ -1,4 +1,4 @@
-Lock-Free hash table is presented to your attention. The implementation is much better than the .Net Core version. The API is fully compatible with the current version 3.0. The hash table is presented in two versions A and B. In the repository, you can find unit tests proving the absence of bugs. Benchmarks of performance and memory usage are also presented. Below is a list of advantages and disadvantages. ![See for more information](https://www.linkedin.com/pulse/lock-free-hash-table-maksim-burtsev/)
+Lock-Free hash table is presented to your attention. The implementation is much better than the .Net Core version. The API is fully compatible with the current version 3.0. The hash table is presented in two versions A and B. In the repository, you can find unit tests proving the absence of bugs. Benchmarks of performance and memory usage are also presented. Below is a list of advantages and disadvantages. For performance tests used ![BenchmarkDotNet](https://github.com/dotnet/BenchmarkDotNet), also a mechanism was applied for simultaneously starting threads as much as possible. ![See for more information](https://www.linkedin.com/pulse/lock-free-hash-table-maksim-burtsev/)
 
 ## ConcurrentDictionary_A
 
@@ -12,6 +12,7 @@ Lock-Free hash table is presented to your attention. The implementation is much 
 * ContainsKey faster from 15% to 60%
 * Functions GetValues, GetKeys, CopyTo and others do not block the table.
 * Functions with callbacks like "TValue GetOrAdd(TKey key, Func<TKey, TValue> valueFactory)" only calls the factory if the value is actually used. The current version can call the factory even if the received value will not used.
+* During grow, the table is not locked.
 * Memory usage overage three times less.
 
 ### Disadvantage
@@ -29,6 +30,7 @@ Lock-Free hash table is presented to your attention. The implementation is much 
 * TryGet faster from 1% to 30% (fully wait-free TryGet and Enumeration)
 * Functions GetValues, GetKeys, CopyTo and others do not block the table.
 * Functions with callbacks like "TValue GetOrAdd(TKey key, Func<TKey, TValue> valueFactory)" only calls the factory if the value is actually used. The current version can call the factory even if the received value will not used.
+* During grow, the table is not locked.
 * Memory usage overage 2,5 times less
 
 ### Disadvantage
