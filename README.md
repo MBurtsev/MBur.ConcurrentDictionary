@@ -36,7 +36,7 @@ Lock-Free hash table is presented to your attention. The implementation is much 
 ### Disadvantage
 
 * TryUpdate slower from 9% to 48%
-* If the key or value is a reference type, then a certain number of objects will not be collected heap. The internal implementation of the hash table uses a write buffer that stores the latest links. If the hash table is not used for a long time, these links may remain in the internal buffer. The problem is not terrible if the objects do not take up a lot of memory, or if these objects are used in the application. Otherwise, it is recommended to use the Clear method if the hash table is no longer needed.
+* If the key or value is a reference type, then a certain number of objects will not be collected by heap. The internal implementation of the hash table uses a write buffer that stores the latest links. If the hash table is not used for a long time, these links may remain in the internal cycle buffer. The problem is not terrible if the objects do not take up a lot of memory, or if these objects are used in the application. Otherwise, it is recommended to use the Clear method if the hash table is no longer needed.
 
 ![The chart document can be viewed here](https://docs.google.com/spreadsheets/d/1QEh_A9CcXZr5duHLOoU2te1xmSas_2eU_dbvK5dA0Nk/edit?usp=sharing)
 
