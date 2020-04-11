@@ -10,9 +10,9 @@ Lock-Free hash table is presented to your attention. The implementation is much 
 * GetOrUpdate faster from 400% to 480%
 * AddOrUpdate faster from 400% to 650%
 * ContainsKey faster from 15% to 60%
-* Functions GetValues, GetKeys, CopyTo and others do not block the table.
+* Functions GetValues, GetKeys, CopyTo and others do not block the hash-table.
 * Functions with callbacks like "TValue GetOrAdd(TKey key, Func<TKey, TValue> valueFactory)" only calls the factory if the value is actually used. The current version can call the factory even if the received value will not used.
-* During grow, the table is not locked.
+* During grow, the hash-table is not locked.
 * Memory usage overage three times less.
 
 ### Disadvantage
@@ -28,9 +28,9 @@ Lock-Free hash table is presented to your attention. The implementation is much 
 * GetOrAdd faster from 270% to 500%
 * AddOrUpdate faster from 380% to 600%
 * TryGet faster from 1% to 30% (fully wait-free TryGet and Enumeration)
-* Functions GetValues, GetKeys, CopyTo and others do not block the table.
+* Functions GetValues, GetKeys, CopyTo and others do not block the hash-table.
 * Functions with callbacks like "TValue GetOrAdd(TKey key, Func<TKey, TValue> valueFactory)" only calls the factory if the value is actually used. The current version can call the factory even if the received value will not used.
-* During grow, the table is not locked.
+* During grow, the hash-table is not locked.
 * Memory usage overage 2,5 times less
 
 ### Disadvantage
