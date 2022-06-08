@@ -1,5 +1,7 @@
 Lock-Free hash table is presented to your attention. The implementation is much better than the .Net Core version. The API is fully compatible with the current version 3.0. The hash table is presented in two versions A and B. In the repository, you can find unit tests proving the absence of bugs. Benchmarks of performance and memory usage are also presented. For performance tests used ![BenchmarkDotNet](https://github.com/dotnet/BenchmarkDotNet), also a mechanism was applied for simultaneously starting threads as much as possible. Below is a list of advantages and disadvantages. [See for more information](https://www.linkedin.com/pulse/lock-free-hash-table-maksim-burtsev/)
 
+**ATTENTION: A flaw has been found in these implementations. Use only if you are sure that key.GetHashCode returns a unique code. For example, there is no guarantee for the string type.**
+
 ## ConcurrentDictionary_A
 
 ### Advantage
